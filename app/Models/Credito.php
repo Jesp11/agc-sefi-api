@@ -26,6 +26,14 @@ class Credito extends Model
         'dias_pago',
         'tipo_credito',
         'estado',
+        'tasa_asignada',
+        'porcentaje_interes',
+        'tabla_amortizacion',
+    ];
+
+    protected $casts = [
+        'tabla_amortizacion' => 'array',
+        'porcentaje_interes' => 'decimal:2',
     ];
 
     public function cliente()

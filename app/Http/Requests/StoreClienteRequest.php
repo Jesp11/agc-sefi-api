@@ -23,7 +23,7 @@ class StoreClienteRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'id_asesor' => 'required|integer|exists:asesores,id',
+            'id_asesor' => 'required_without:id_grupo|nullable|integer|exists:asesores,id',
             'nombre_completo' => 'required|string|max:255',
             'curp' => 'required|string|size:18|unique:clientes,curp',
             'clave_elector' => 'required|string|max:255',
