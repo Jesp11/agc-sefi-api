@@ -23,7 +23,8 @@ class StoreCreditoRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'id_cliente' => 'required|string|exists:clientes,id_cliente',
+            'id_cliente' => 'required_without:id_grupo|nullable|string|exists:clientes,id_cliente',
+            'id_grupo' => 'required_without:id_cliente|nullable|integer|exists:grupos,id',
             'fecha_otorgacion' => 'required|date',
             'monto_otorgado' => 'required|numeric|min:0',
             'interes' => 'required|numeric|min:0',
