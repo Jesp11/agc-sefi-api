@@ -147,6 +147,21 @@ Gestiona la información de los clientes.
 ```
 *Nota: El `id_cliente` se genera automáticamente. El campo `id_asesor` es obligatorio a menos que proporciones un `id_grupo`; si se proporciona el `id_grupo`, el cliente heredará automáticamente el asesor de dicho grupo y se le asociará de inmediato.*
 
+### 6.3 Ver Cliente
+- **URL:** `/api/clientes/{id}`
+- **Método:** `GET`
+- **Respuesta:** Detalle completo del cliente incluyendo sus créditos, referencias, avales, asesor y grupos.
+
+### 6.4 Actualizar Cliente
+- **URL:** `/api/clientes/{id}`
+- **Método:** `PUT/PATCH`
+- **Body (JSON):** Los mismos campos que en la creación, pero todos son opcionales (`sometimes`).
+
+### 6.5 Eliminar Cliente
+- **URL:** `/api/clientes/{id}`
+- **Método:** `DELETE`
+
+
 ---
 
 ## 7. Asesores
@@ -166,6 +181,19 @@ Gestiona el personal encargado de los créditos.
     "nombre_asesor": "Jossue"
 }
 ```
+
+### 7.3 Ver Asesor
+- **URL:** `/api/asesores/{id}`
+- **Método:** `GET`
+
+### 7.4 Actualizar Asesor
+- **URL:** `/api/asesores/{id}`
+- **Método:** `PUT/PATCH`
+
+### 7.5 Eliminar Asesor
+- **URL:** `/api/asesores/{id}`
+- **Método:** `DELETE`
+
 
 ---
 
@@ -214,6 +242,19 @@ Gestiona los préstamos otorgados.
 *Nota: El sistema detecta automáticamente que es un crédito **Grupal** al recibir `id_grupo`.*
 *Nota: El `id_asesor` se asigna automáticamente basándose en el asesor del cliente (si es individual) o del grupo (si es grupal). El `ciclo` se establece por defecto en 0.*
 
+### 8.4 Ver Crédito
+- **URL:** `/api/creditos/{id}`
+- **Método:** `GET`
+
+### 8.5 Actualizar Crédito
+- **URL:** `/api/creditos/{id}`
+- **Método:** `PUT/PATCH`
+
+### 8.6 Eliminar Crédito
+- **URL:** `/api/creditos/{id}`
+- **Método:** `DELETE`
+
+
 ---
 
 ## 9. Grupos
@@ -257,6 +298,19 @@ Gestiona grupos de clientes para créditos grupales.
 }
 ```
 
+### 9.5 Ver Grupo
+- **URL:** `/api/grupos/{id}`
+- **Método:** `GET`
+
+### 9.6 Actualizar Grupo
+- **URL:** `/api/grupos/{id}`
+- **Método:** `PUT/PATCH`
+
+### 9.7 Eliminar Grupo
+- **URL:** `/api/grupos/{id}`
+- **Método:** `DELETE`
+
+
 ---
 
 ## 10. Referencias
@@ -279,6 +333,19 @@ Contactos familiares o de amistad del cliente.
 }
 ```
 
+### 10.2 Ver Referencia
+- **URL:** `/api/referencias/{id}`
+- **Método:** `GET`
+
+### 10.3 Actualizar Referencia
+- **URL:** `/api/referencias/{id}`
+- **Método:** `PUT/PATCH`
+
+### 10.4 Eliminar Referencia
+- **URL:** `/api/referencias/{id}`
+- **Método:** `DELETE`
+
+
 ---
 
 ## 11. Avales
@@ -298,6 +365,19 @@ Garantizan el pago del crédito.
     "parentesco": "Tío"
 }
 ```
+
+### 11.2 Ver Aval
+- **URL:** `/api/avales/{id}`
+- **Método:** `GET`
+
+### 11.3 Actualizar Aval
+- **URL:** `/api/avales/{id}`
+- **Método:** `PUT/PATCH`
+
+### 11.4 Eliminar Aval
+- **URL:** `/api/avales/{id}`
+- **Método:** `DELETE`
+
 
 ---
 
