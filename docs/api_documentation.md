@@ -145,7 +145,7 @@ Gestiona la información de los clientes.
     "id_grupo": 1
 }
 ```
-*Nota: El `id_cliente` se genera automáticamente. Si se proporciona `id_grupo`, el cliente se asociará automáticamente a ese grupo.*
+*Nota: El `id_cliente` se genera automáticamente. El campo `id_asesor` es obligatorio a menos que proporciones un `id_grupo`; si se proporciona el `id_grupo`, el cliente heredará automáticamente el asesor de dicho grupo y se le asociará de inmediato.*
 
 ---
 
@@ -298,6 +298,50 @@ Garantizan el pago del crédito.
     "parentesco": "Tío"
 }
 ```
+
+---
+
+## 12. Simulador de Créditos (Motor)
+
+Permite calcular las tablas de amortización y las opciones disponibles (tasas y plazos) para un crédito antes de guardarlo.
+
+### 12.1 Simular Crédito Individual
+- **URL:** `/api/simular/individual`
+- **Método:** `POST`
+- **Body (JSON):**
+```json
+{
+    "ciclo": 4,
+    "monto_solicitado": 5000.00,
+    "buen_historial": true,
+    "cantidad_referidos": 2,
+    "origen": "nuevo"
+}
+```
+
+### 12.2 Simular Crédito Grupal
+- **URL:** `/api/simular/grupal`
+- **Método:** `POST`
+- **Body (JSON):**
+```json
+{
+    "ciclo": 0,
+    "monto_total_grupo": 10000.00,
+    "cantidad_integrantes": 5,
+    "origen": "nuevo",
+    "cantidad_referidos": 0
+}
+```
+
+### 12.3 Catálogo de Tasas Individual
+- **URL:** `/api/simular/catalogo/individual`
+- **Método:** `GET`
+Devuelve el catálogo estático de tasas, plazos e intereses configurados para créditos individuales. Además, retorna el arreglo `"origenes"` con los valores permitidos (`["nuevo", "competencia"]`).
+
+### 12.4 Catálogo de Tasas Grupal
+- **URL:** `/api/simular/catalogo/grupal`
+- **Método:** `GET`
+Devuelve el catálogo estático de tasas, plazos e intereses configurados para créditos grupales, junto con los montos mínimos requeridos. También retorna el arreglo `"origenes"` con los valores permitidos (`["nuevo", "competencia", "casa", "referido_socio"]`).
 
 ---
 

@@ -32,6 +32,10 @@ class StoreCreditoRequest extends FormRequest
             'plazos' => 'required|integer|min:1',
             'valor_ficha' => 'required|numeric|min:0',
             'dias_pago' => 'required|string|max:255',
+            'tasa_asignada' => 'nullable|string|max:50',
+            'porcentaje_interes' => 'nullable|numeric|min:0',
+            'tabla_amortizacion' => 'nullable|array',
         ];
     }
 }
+

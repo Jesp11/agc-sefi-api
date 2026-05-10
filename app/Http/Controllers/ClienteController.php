@@ -11,7 +11,7 @@ class ClienteController extends Controller
 {
     public function index()
     {
-        $clientes = Cliente::with(['creditos', 'referencias', 'avales'])->paginate(10);
+        $clientes = Cliente::with(['creditos', 'referencias', 'avales', 'asesor', 'grupos'])->paginate(10);
         return response()->json($clientes);
     }
 
@@ -19,6 +19,11 @@ class ClienteController extends Controller
     {
         $data = $request->validated();
         
+        if (isset($data['id_grupo'])) {
+            $grupo = \App\Models\Grupo::findOrFail($data['id_grupo']);
+            $data['id_asesor'] = $grupo->id_asesor;
+        }
+
         // Generar id_cliente automático
         $nombre = $data['nombre_completo'];
         $words = explode(' ', strtoupper(trim($nombre)));
@@ -51,13 +56,13 @@ class ClienteController extends Controller
 
         return response()->json([
             'message' => 'Cliente creado exitosamente',
-            'data' => $cliente->load('grupos')
+            'data' => $cliente->load(['grupos', 'asesor'])
         ], 201);
     }
 
     public function show($id)
     {
-        $cliente = Cliente::with(['creditos', 'referencias', 'avales', 'grupos'])->findOrFail($id);
+        $cliente = Cliente::with(['creditos', 'referencias', 'avales', 'grupos', 'asesor'])->findOrFail($id);
         return response()->json($cliente);
     }
 
@@ -74,7 +79,7 @@ class ClienteController extends Controller
 
         return response()->json([
             'message' => 'Cliente actualizado exitosamente',
-            'data' => $cliente->load('grupos')
+            'data' => $cliente->load(['grupos', 'asesor'])
         ]);
     }
 

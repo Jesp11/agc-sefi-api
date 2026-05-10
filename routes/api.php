@@ -31,6 +31,14 @@ Route::middleware('auth:api')->group(function () {
     Route::apiResource('grupos', GrupoController::class);
     Route::post('grupos/{id}/agregar-cliente', [GrupoController::class, 'agregarCliente']);
     Route::post('grupos/{id}/quitar-cliente', [GrupoController::class, 'quitarCliente']);
+    
+    // Rutas de simulación
+    Route::post('simular/individual', [\App\Http\Controllers\SimulationController::class, 'simulateIndividual']);
+    Route::post('simular/grupal', [\App\Http\Controllers\SimulationController::class, 'simulateGroup']);
+    Route::get('simular/catalogo/individual', [\App\Http\Controllers\SimulationController::class, 'getCatalogIndividual']);
+    Route::get('simular/catalogo/grupal', [\App\Http\Controllers\SimulationController::class, 'getCatalogGroup']);
+
+
 
     Route::get('/user', function (Request $request) {
         return $request->user();

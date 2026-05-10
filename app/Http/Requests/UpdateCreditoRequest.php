@@ -32,6 +32,10 @@ class UpdateCreditoRequest extends FormRequest
             'plazos' => 'sometimes|integer|min:1',
             'valor_ficha' => 'sometimes|numeric|min:0',
             'dias_pago' => 'sometimes|string|max:255',
+            'tasa_asignada' => 'sometimes|nullable|string|max:50',
+            'porcentaje_interes' => 'sometimes|nullable|numeric|min:0',
+            'tabla_amortizacion' => 'sometimes|nullable|array',
         ];
     }
 }
+
