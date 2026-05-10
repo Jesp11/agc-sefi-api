@@ -47,4 +47,9 @@ class Cliente extends Model
     {
         return $this->belongsTo(Asesor::class, 'id_asesor');
     }
+
+    public function grupos()
+    {
+        return $this->belongsToMany(Grupo::class, 'cliente_grupo', 'id_cliente', 'id_grupo');
+    }
 }

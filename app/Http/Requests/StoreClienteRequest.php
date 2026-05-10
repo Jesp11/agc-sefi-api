@@ -33,6 +33,7 @@ class StoreClienteRequest extends FormRequest
             'ocupacion' => 'required|string|max:255',
             'direccion_trabajo' => 'required|string',
             'telefono_trabajo' => 'required|string|max:20',
+            'id_grupo' => 'sometimes|integer|exists:grupos,id',
         ];
     }
 }

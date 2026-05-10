@@ -44,25 +44,37 @@ class ClienteController extends Controller
         $data['id_cliente'] = $initials . str_pad($newNumber, 3, '0', STR_PAD_LEFT);
 
         $cliente = Cliente::create($data);
+
+        if (isset($data['id_grupo'])) {
+            $cliente->grupos()->attach($data['id_grupo']);
+        }
+
         return response()->json([
             'message' => 'Cliente creado exitosamente',
-            'data' => $cliente
+            'data' => $cliente->load('grupos')
         ], 201);
     }
 
     public function show($id)
     {
-        $cliente = Cliente::with(['creditos', 'referencias', 'avales'])->findOrFail($id);
+        $cliente = Cliente::with(['creditos', 'referencias', 'avales', 'grupos'])->findOrFail($id);
         return response()->json($cliente);
     }
 
     public function update(UpdateClienteRequest $request, $id)
     {
         $cliente = Cliente::findOrFail($id);
-        $cliente->update($request->validated());
+        $data = $request->validated();
+        
+        $cliente->update($data);
+
+        if (isset($data['id_grupo'])) {
+            $cliente->grupos()->sync([$data['id_grupo']]);
+        }
+
         return response()->json([
             'message' => 'Cliente actualizado exitosamente',
-            'data' => $cliente
+            'data' => $cliente->load('grupos')
         ]);
     }
 

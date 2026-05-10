@@ -35,6 +35,7 @@ class UpdateClienteRequest extends FormRequest
             'ocupacion' => 'sometimes|string|max:255',
             'direccion_trabajo' => 'sometimes|string',
             'telefono_trabajo' => 'sometimes|string|max:20',
+            'id_grupo' => 'sometimes|integer|exists:grupos,id',
         ];
     }
 }

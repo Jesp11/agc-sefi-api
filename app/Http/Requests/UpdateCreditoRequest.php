@@ -23,7 +23,8 @@ class UpdateCreditoRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'id_cliente' => 'sometimes|string|exists:clientes,id_cliente',
+            'id_cliente' => 'sometimes|nullable|string|exists:clientes,id_cliente',
+            'id_grupo' => 'sometimes|nullable|integer|exists:grupos,id',
             'fecha_otorgacion' => 'sometimes|date',
             'monto_otorgado' => 'sometimes|numeric|min:0',
             'interes' => 'sometimes|numeric|min:0',

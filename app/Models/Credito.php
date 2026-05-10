@@ -14,6 +14,7 @@ class Credito extends Model
 
     protected $fillable = [
         'id_cliente',
+        'id_grupo',
         'id_asesor',
         'fecha_otorgacion',
         'ciclo',
@@ -23,11 +24,18 @@ class Credito extends Model
         'plazos',
         'valor_ficha',
         'dias_pago',
+        'tipo_credito',
+        'estado',
     ];
 
     public function cliente()
     {
         return $this->belongsTo(Cliente::class, 'id_cliente', 'id_cliente');
+    }
+
+    public function grupo()
+    {
+        return $this->belongsTo(Grupo::class, 'id_grupo');
     }
 
     public function asesor()

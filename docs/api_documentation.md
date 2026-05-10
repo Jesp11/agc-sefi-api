@@ -141,10 +141,11 @@ Gestiona la información de los clientes.
     "entre_calles": "Calle 1 y Calle 2",
     "ocupacion": "Comerciante",
     "direccion_trabajo": "Mercado Central Local 5",
-    "telefono_trabajo": "5598765432"
+    "telefono_trabajo": "5598765432",
+    "id_grupo": 1
 }
 ```
-*Nota: El `id_cliente` se genera automáticamente a partir de las iniciales del nombre (ej. JP001).*
+*Nota: El `id_cliente` se genera automáticamente. Si se proporciona `id_grupo`, el cliente se asociará automáticamente a ese grupo.*
 
 ---
 
@@ -176,7 +177,7 @@ Gestiona los préstamos otorgados.
 - **URL:** `/api/creditos`
 - **Método:** `GET`
 
-### 8.2 Crear Crédito
+### 8.2 Crear Crédito Individual
 - **URL:** `/api/creditos`
 - **Método:** `POST`
 - **Body (JSON):**
@@ -192,15 +193,77 @@ Gestiona los préstamos otorgados.
     "dias_pago": "Lunes"
 }
 ```
-*Nota: El `id_asesor` se asigna automáticamente basándose en el asesor del cliente. El `ciclo` se establece por defecto en 0.*
+*Nota: El sistema detecta automáticamente que es un crédito **Individual** al recibir `id_cliente`.*
+
+### 8.3 Crear Crédito Grupal
+- **URL:** `/api/creditos`
+- **Método:** `POST`
+- **Body (JSON):**
+```json
+{
+    "id_grupo": 1,
+    "fecha_otorgacion": "2026-05-09",
+    "monto_otorgado": 20000.00,
+    "interes": 2000.00,
+    "total": 22000.00,
+    "plazos": 10,
+    "valor_ficha": 2200.00,
+    "dias_pago": "Miércoles"
+}
+```
+*Nota: El sistema detecta automáticamente que es un crédito **Grupal** al recibir `id_grupo`.*
+*Nota: El `id_asesor` se asigna automáticamente basándose en el asesor del cliente (si es individual) o del grupo (si es grupal). El `ciclo` se establece por defecto en 0.*
 
 ---
 
-## 9. Referencias
+## 9. Grupos
+
+Gestiona grupos de clientes para créditos grupales.
+
+### 9.1 Listar Grupos
+- **URL:** `/api/grupos`
+- **Método:** `GET`
+
+### 9.2 Crear Grupo
+- **URL:** `/api/grupos`
+- **Método:** `POST`
+- **Body (JSON):**
+```json
+{
+    "nombre_grupo": "Mujeres Emprendedoras",
+    "id_asesor": 1,
+    "clientes": ["LMDT001", "JP002"]
+}
+```
+*Nota: El campo `clientes` es opcional.*
+
+### 9.3 Añadir Cliente al Grupo
+- **URL:** `/api/grupos/{id}/agregar-cliente`
+- **Método:** `POST`
+- **Body (JSON):**
+```json
+{
+    "id_cliente": "JP002"
+}
+```
+
+### 9.4 Eliminar Cliente del Grupo
+- **URL:** `/api/grupos/{id}/quitar-cliente`
+- **Método:** `POST`
+- **Body (JSON):**
+```json
+{
+    "id_cliente": "JP002"
+}
+```
+
+---
+
+## 10. Referencias
 
 Contactos familiares o de amistad del cliente.
 
-### 9.1 Crear Referencia
+### 10.1 Crear Referencia
 - **URL:** `/api/referencias`
 - **Método:** `POST`
 - **Body (JSON):**
@@ -218,11 +281,11 @@ Contactos familiares o de amistad del cliente.
 
 ---
 
-## 10. Avales
+## 11. Avales
 
 Garantizan el pago del crédito.
 
-### 10.1 Crear Aval
+### 11.1 Crear Aval
 - **URL:** `/api/avales`
 - **Método:** `POST`
 - **Body (JSON):**

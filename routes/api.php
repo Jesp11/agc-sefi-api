@@ -9,6 +9,7 @@ use App\Http\Controllers\AsesorController;
 use App\Http\Controllers\CreditoController;
 use App\Http\Controllers\ReferenciaController;
 use App\Http\Controllers\AvalController;
+use App\Http\Controllers\GrupoController;
 
 Route::group([
     'middleware' => 'api',
@@ -27,6 +28,9 @@ Route::middleware('auth:api')->group(function () {
     Route::apiResource('creditos', CreditoController::class);
     Route::apiResource('referencias', ReferenciaController::class);
     Route::apiResource('avales', AvalController::class);
+    Route::apiResource('grupos', GrupoController::class);
+    Route::post('grupos/{id}/agregar-cliente', [GrupoController::class, 'agregarCliente']);
+    Route::post('grupos/{id}/quitar-cliente', [GrupoController::class, 'quitarCliente']);
 
     Route::get('/user', function (Request $request) {
         return $request->user();
