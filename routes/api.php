@@ -4,6 +4,11 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\ClienteController;
+use App\Http\Controllers\AsesorController;
+use App\Http\Controllers\CreditoController;
+use App\Http\Controllers\ReferenciaController;
+use App\Http\Controllers\AvalController;
 
 Route::group([
     'middleware' => 'api',
@@ -16,6 +21,14 @@ Route::group([
     Route::post('me', [AuthController::class, 'me'])->middleware('auth:api');
 });
 
-Route::get('/user', function (Request $request) {
-    return $request->user();
-})->middleware('auth:api');
+Route::middleware('auth:api')->group(function () {
+    Route::apiResource('clientes', ClienteController::class);
+    Route::apiResource('asesores', AsesorController::class);
+    Route::apiResource('creditos', CreditoController::class);
+    Route::apiResource('referencias', ReferenciaController::class);
+    Route::apiResource('avales', AvalController::class);
+
+    Route::get('/user', function (Request $request) {
+        return $request->user();
+    });
+});
