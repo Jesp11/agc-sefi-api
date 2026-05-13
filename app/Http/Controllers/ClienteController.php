@@ -11,7 +11,7 @@ class ClienteController extends Controller
 {
     public function index()
     {
-        $clientes = Cliente::with(['creditos', 'referencias', 'avales', 'asesor', 'grupos'])->paginate(10);
+        $clientes = Cliente::with(['creditos.asesor', 'referencias', 'avales', 'asesor', 'grupos'])->paginate(10);
         return response()->json($clientes);
     }
 
@@ -62,7 +62,7 @@ class ClienteController extends Controller
 
     public function show($id)
     {
-        $cliente = Cliente::with(['creditos', 'referencias', 'avales', 'grupos', 'asesor'])->findOrFail($id);
+        $cliente = Cliente::with(['creditos.asesor', 'referencias', 'avales', 'grupos', 'asesor'])->findOrFail($id);
         return response()->json($cliente);
     }
 
