@@ -24,6 +24,7 @@ class UpdateAsesorRequest extends FormRequest
     {
         return [
             'nombre_asesor' => 'sometimes|string|max:255',
+            'curp' => 'sometimes|string|size:18|unique:asesores,curp,' . $this->route('asesor'),
         ];
     }
 }

@@ -24,6 +24,7 @@ class StoreAsesorRequest extends FormRequest
     {
         return [
             'nombre_asesor' => 'required|string|max:255',
+            'curp' => 'required|string|size:18|unique:asesores,curp',
         ];
     }
 }

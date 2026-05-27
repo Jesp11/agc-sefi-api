@@ -12,7 +12,10 @@ class Asesor extends Model
     protected $table = 'asesores';
 
     protected $fillable = [
+        'id_asesor',
         'nombre_asesor',
+        'curp',
+        'cumpleanos',
     ];
 
     public function creditos()

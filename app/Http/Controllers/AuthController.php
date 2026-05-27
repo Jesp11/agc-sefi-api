@@ -76,6 +76,39 @@ class AuthController extends Controller
     }
 
     /**
+     * Update the authenticated user's profile (CURP / birthday).
+     *
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function updateProfile(Request $request)
+    {
+        $user = Auth::guard('api')->user();
+
+        $validator = Validator::make($request->all(), [
+            'curp' => 'required|string|size:18|unique:users,curp,' . $user->id,
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
+        }
+
+        $curp = strtoupper($request->input('curp'));
+        $year  = substr($curp, 4, 2);
+        $month = substr($curp, 6, 2);
+        $day   = substr($curp, 8, 2);
+        $currentYear = (int) date('y');
+        $fullYear = ((int)$year > $currentYear) ? '19' . $year : '20' . $year;
+        $cumpleanos = $fullYear . '-' . $month . '-' . $day;
+
+        $user->update(['curp' => $curp, 'cumpleanos' => $cumpleanos]);
+
+        return response()->json([
+            'message' => 'Perfil actualizado exitosamente',
+            'user' => $user,
+        ]);
+    }
+
+    /**
      * Log the user out (Invalidate the token).
      *
      * @return \Illuminate\Http\JsonResponse
