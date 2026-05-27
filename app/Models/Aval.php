@@ -17,6 +17,9 @@ class Aval extends Model
         'direccion',
         'telefono',
         'parentesco',
+        'tiempo_conocer',
+        'ocupacion_laboral',
+        'empresa',
     ];
 
     public function cliente()

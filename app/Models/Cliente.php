@@ -26,6 +26,7 @@ class Cliente extends Model
         'ocupacion',
         'direccion_trabajo',
         'telefono_trabajo',
+        'fecha_nacimiento',
     ];
 
     public function creditos()

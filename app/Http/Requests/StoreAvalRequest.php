@@ -28,6 +28,9 @@ class StoreAvalRequest extends FormRequest
             'direccion' => 'required|string',
             'telefono' => 'required|string|max:20',
             'parentesco' => 'required|string|max:255',
+            'tiempo_conocer' => 'nullable|string|max:100',
+            'ocupacion_laboral' => 'nullable|string|max:255',
+            'empresa' => 'nullable|string|max:255',
         ];
     }
 }

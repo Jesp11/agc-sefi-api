@@ -28,6 +28,9 @@ class UpdateAvalRequest extends FormRequest
             'direccion' => 'sometimes|string',
             'telefono' => 'sometimes|string|max:20',
             'parentesco' => 'sometimes|string|max:255',
+            'tiempo_conocer' => 'sometimes|nullable|string|max:100',
+            'ocupacion_laboral' => 'sometimes|nullable|string|max:255',
+            'empresa' => 'sometimes|nullable|string|max:255',
         ];
     }
 }

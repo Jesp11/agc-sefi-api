@@ -7,19 +7,11 @@ use Illuminate\Foundation\Http\FormRequest;
 
 class StoreClienteRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     */
     public function authorize(): bool
     {
         return true;
     }
 
-    /**
-     * Get the validation rules that apply to the request.
-     *
-     * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
-     */
     public function rules(): array
     {
         return [
@@ -33,7 +25,17 @@ class StoreClienteRequest extends FormRequest
             'ocupacion' => 'required|string|max:255',
             'direccion_trabajo' => 'required|string',
             'telefono_trabajo' => 'required|string|max:20',
+            'fecha_nacimiento' => 'nullable|date',
             'id_grupo' => 'sometimes|integer|exists:grupos,id',
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'id_asesor.required_without' => 'Selecciona un asesor antes de guardar el cliente.',
+            'id_asesor.integer'          => 'El asesor seleccionado no es válido.',
+            'id_asesor.exists'           => 'El asesor seleccionado no existe.',
         ];
     }
 }
