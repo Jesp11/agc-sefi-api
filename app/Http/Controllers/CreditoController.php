@@ -21,25 +21,27 @@ class CreditoController extends Controller
     {
         $data = $request->validated();
         
+        $esPersonalizado = !empty($data['es_personalizado']);
+
         if (!empty($data['id_cliente'])) {
             $cliente = Cliente::findOrFail($data['id_cliente']);
-            
-            // Validar si el cliente ya tiene un crédito activo (individual)
-            $creditoActivo = Credito::where('id_cliente', $cliente->id_cliente)
-                ->where('estado', 'Activo')
-                ->exists();
-                
-            if ($creditoActivo) {
-                return response()->json(['message' => 'El cliente ya cuenta con un crédito individual activo.'], 422);
-            }
 
-            // Validar si el cliente está en un grupo con crédito activo
-            $grupoConCreditoActivo = $cliente->grupos()->whereHas('creditos', function($query) {
-                $query->where('estado', 'Activo');
-            })->exists();
+            if (!$esPersonalizado) {
+                $creditoActivo = Credito::where('id_cliente', $cliente->id_cliente)
+                    ->where('estado', 'Activo')
+                    ->exists();
 
-            if ($grupoConCreditoActivo) {
-                return response()->json(['message' => 'El cliente pertenece a un grupo que ya cuenta con un crédito activo.'], 422);
+                if ($creditoActivo) {
+                    return response()->json(['message' => 'El cliente ya cuenta con un crédito individual activo.'], 422);
+                }
+
+                $grupoConCreditoActivo = $cliente->grupos()->whereHas('creditos', function($query) {
+                    $query->where('estado', 'Activo');
+                })->exists();
+
+                if ($grupoConCreditoActivo) {
+                    return response()->json(['message' => 'El cliente pertenece a un grupo que ya cuenta con un crédito activo.'], 422);
+                }
             }
 
             $data['id_asesor'] = $cliente->id_asesor;
@@ -47,32 +49,30 @@ class CreditoController extends Controller
             $data['id_grupo'] = null;
         } else {
             $grupo = Grupo::with('clientes')->findOrFail($data['id_grupo']);
-            
-            // Validar el grupo en sí
-            $creditoGrupoActivo = Credito::where('id_grupo', $grupo->id)
-                ->where('estado', 'Activo')
-                ->exists();
 
-            if ($creditoGrupoActivo) {
-                return response()->json(['message' => 'Este grupo ya cuenta con un crédito activo.'], 422);
-            }
+            if (!$esPersonalizado) {
+                $creditoGrupoActivo = Credito::where('id_grupo', $grupo->id)
+                    ->where('estado', 'Activo')
+                    ->exists();
 
-            // Validar cada integrante del grupo
-            foreach ($grupo->clientes as $integrante) {
-                // Crédito individual del integrante
-                if (Credito::where('id_cliente', $integrante->id_cliente)->where('estado', 'Activo')->exists()) {
-                    return response()->json(['message' => "El integrante {$integrante->nombre_completo} ya cuenta con un crédito individual activo."], 422);
+                if ($creditoGrupoActivo) {
+                    return response()->json(['message' => 'Este grupo ya cuenta con un crédito activo.'], 422);
                 }
-                
-                // Otros grupos del integrante con crédito activo
-                $otroGrupoActivo = $integrante->grupos()
-                    ->where('grupos.id', '!=', $grupo->id)
-                    ->whereHas('creditos', function($query) {
-                        $query->where('estado', 'Activo');
-                    })->exists();
 
-                if ($otroGrupoActivo) {
-                    return response()->json(['message' => "El integrante {$integrante->nombre_completo} pertenece a otro grupo con crédito activo."], 422);
+                foreach ($grupo->clientes as $integrante) {
+                    if (Credito::where('id_cliente', $integrante->id_cliente)->where('estado', 'Activo')->exists()) {
+                        return response()->json(['message' => "El integrante {$integrante->nombre_completo} ya cuenta con un crédito individual activo."], 422);
+                    }
+
+                    $otroGrupoActivo = $integrante->grupos()
+                        ->where('grupos.id', '!=', $grupo->id)
+                        ->whereHas('creditos', function($query) {
+                            $query->where('estado', 'Activo');
+                        })->exists();
+
+                    if ($otroGrupoActivo) {
+                        return response()->json(['message' => "El integrante {$integrante->nombre_completo} pertenece a otro grupo con crédito activo."], 422);
+                    }
                 }
             }
 

@@ -17,6 +17,7 @@ class Credito extends Model
         'id_grupo',
         'id_asesor',
         'fecha_otorgacion',
+        'fecha_primer_pago',
         'ciclo',
         'monto_otorgado',
         'interes',
@@ -26,6 +27,7 @@ class Credito extends Model
         'dias_pago',
         'tipo_credito',
         'estado',
+        'es_personalizado',
         'tasa_asignada',
         'porcentaje_interes',
         'tabla_amortizacion',
@@ -34,6 +36,7 @@ class Credito extends Model
     protected $casts = [
         'tabla_amortizacion' => 'array',
         'porcentaje_interes' => 'decimal:2',
+        'es_personalizado' => 'boolean',
     ];
 
     public function cliente()
