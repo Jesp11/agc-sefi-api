@@ -24,7 +24,10 @@ class StoreAsesorRequest extends FormRequest
     {
         return [
             'nombre_asesor' => 'required|string|max:255',
-            'curp' => 'required|string|size:18|unique:asesores,curp',
+            'curp'          => 'required|string|size:18|unique:asesores,curp',
+            'telefono'      => 'nullable|string|max:20',
+            'ine'           => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:5120',
+            'ine_2'         => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:5120',
         ];
     }
 }

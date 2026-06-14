@@ -16,6 +16,9 @@ class Asesor extends Model
         'nombre_asesor',
         'curp',
         'cumpleanos',
+        'telefono',
+        'ine_path',
+        'ine_path_2',
     ];
 
     public function creditos()

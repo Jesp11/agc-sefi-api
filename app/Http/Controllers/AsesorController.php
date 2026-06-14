@@ -6,6 +6,7 @@ use App\Models\Asesor;
 use App\Http\Requests\StoreAsesorRequest;
 use App\Http\Requests\UpdateAsesorRequest;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 class AsesorController extends Controller
 {
@@ -52,6 +53,13 @@ class AsesorController extends Controller
         $fullYear = ((int)$year > $currentYear) ? '19' . $year : '20' . $year;
         $data['cumpleanos'] = $fullYear . '-' . $month . '-' . $day;
 
+        if ($request->hasFile('ine')) {
+            $data['ine_path'] = $request->file('ine')->store('ines', 'public');
+        }
+        if ($request->hasFile('ine_2')) {
+            $data['ine_path_2'] = $request->file('ine_2')->store('ines', 'public');
+        }
+
         $asesor = Asesor::create($data);
         return response()->json([
             'message' => 'Asesor creado exitosamente',
@@ -68,7 +76,26 @@ class AsesorController extends Controller
     public function update(UpdateAsesorRequest $request, $id)
     {
         $asesor = Asesor::findOrFail($id);
-        $asesor->update($request->validated());
+        $data = $request->validated();
+
+        if ($request->boolean('delete_ine')) {
+            if ($asesor->ine_path) Storage::disk('public')->delete($asesor->ine_path);
+            $data['ine_path'] = null;
+        } elseif ($request->hasFile('ine')) {
+            if ($asesor->ine_path) Storage::disk('public')->delete($asesor->ine_path);
+            $data['ine_path'] = $request->file('ine')->store('ines', 'public');
+        }
+
+        if ($request->boolean('delete_ine_2')) {
+            if ($asesor->ine_path_2) Storage::disk('public')->delete($asesor->ine_path_2);
+            $data['ine_path_2'] = null;
+        } elseif ($request->hasFile('ine_2')) {
+            if ($asesor->ine_path_2) Storage::disk('public')->delete($asesor->ine_path_2);
+            $data['ine_path_2'] = $request->file('ine_2')->store('ines', 'public');
+        }
+
+        unset($data['delete_ine'], $data['delete_ine_2']);
+        $asesor->update($data);
         return response()->json([
             'message' => 'Asesor actualizado exitosamente',
             'data' => $asesor

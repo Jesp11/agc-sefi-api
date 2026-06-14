@@ -24,7 +24,12 @@ class UpdateAsesorRequest extends FormRequest
     {
         return [
             'nombre_asesor' => 'sometimes|string|max:255',
-            'curp' => 'sometimes|string|size:18|unique:asesores,curp,' . $this->route('asesor'),
+            'curp'          => 'sometimes|string|size:18|unique:asesores,curp,' . $this->route('asesor'),
+            'telefono'      => 'nullable|string|max:20',
+            'ine'           => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:5120',
+            'ine_2'         => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:5120',
+            'delete_ine'    => 'nullable|boolean',
+            'delete_ine_2'  => 'nullable|boolean',
         ];
     }
 }
