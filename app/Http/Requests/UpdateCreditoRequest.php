@@ -35,6 +35,8 @@ class UpdateCreditoRequest extends FormRequest
             'tasa_asignada' => 'sometimes|nullable|string|max:50',
             'porcentaje_interes' => 'sometimes|nullable|numeric|min:0',
             'tabla_amortizacion' => 'sometimes|nullable|array',
+            'abono_recuperacion' => 'sometimes|nullable|numeric|min:0',
+            'estado' => 'sometimes|in:Activo,Finalizado,Cancelado,EnMora,CerradoSinRenovacion',
         ];
     }
 }

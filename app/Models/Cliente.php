@@ -27,6 +27,14 @@ class Cliente extends Model
         'direccion_trabajo',
         'telefono_trabajo',
         'fecha_nacimiento',
+        'estatus',
+        'fecha_cierre',
+        'es_socio_preferencial',
+    ];
+
+    protected $casts = [
+        'es_socio_preferencial' => 'boolean',
+        'fecha_cierre' => 'date',
     ];
 
     public function creditos()
@@ -52,5 +60,15 @@ class Cliente extends Model
     public function grupos()
     {
         return $this->belongsToMany(Grupo::class, 'cliente_grupo', 'id_cliente', 'id_grupo');
+    }
+
+    public function documentos()
+    {
+        return $this->hasMany(DocumentoCliente::class, 'id_cliente', 'id_cliente');
+    }
+
+    public function ciclosHistorial()
+    {
+        return $this->hasMany(CicloHistorial::class, 'id_cliente', 'id_cliente');
     }
 }

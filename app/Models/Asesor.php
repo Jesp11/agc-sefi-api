@@ -30,4 +30,14 @@ class Asesor extends Model
     {
         return $this->hasMany(Cliente::class, 'id_asesor');
     }
+
+    public function ahorroPersonal()
+    {
+        return $this->hasOne(AhorroPersonal::class, 'asesor_id');
+    }
+
+    public function user()
+    {
+        return $this->hasOne(User::class, 'id_asesor');
+    }
 }

@@ -9,9 +9,10 @@ use Illuminate\Http\Request;
 
 class GrupoController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        $grupos = Grupo::with(['clientes', 'asesor', 'creditos'])->paginate(10);
+        $grupos = Grupo::with(['clientes', 'asesor', 'creditos'])
+            ->paginate($request->query('per_page', 10));
         return response()->json($grupos);
     }
 

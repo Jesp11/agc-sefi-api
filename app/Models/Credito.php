@@ -19,24 +19,35 @@ class Credito extends Model
         'fecha_otorgacion',
         'fecha_primer_pago',
         'ciclo',
+        'ciclo_inicio_mora',
+        'abono_recuperacion',
+        'comision_apertura',
         'monto_otorgado',
         'interes',
         'total',
+        'saldo_pendiente',
         'plazos',
         'valor_ficha',
         'dias_pago',
         'tipo_credito',
         'estado',
         'es_personalizado',
+        'es_adicional',
         'tasa_asignada',
         'porcentaje_interes',
         'tabla_amortizacion',
+        'credito_padre_id',
+        'dias_mora_cache',
     ];
 
     protected $casts = [
         'tabla_amortizacion' => 'array',
         'porcentaje_interes' => 'decimal:2',
         'es_personalizado' => 'boolean',
+        'es_adicional' => 'boolean',
+        'comision_apertura' => 'decimal:2',
+        'saldo_pendiente' => 'decimal:2',
+        'abono_recuperacion' => 'decimal:2',
     ];
 
     public function cliente()
@@ -52,5 +63,25 @@ class Credito extends Model
     public function asesor()
     {
         return $this->belongsTo(Asesor::class, 'id_asesor');
+    }
+
+    public function pagos()
+    {
+        return $this->hasMany(Pago::class, 'num_prog', 'num_prog');
+    }
+
+    public function creditoPadre()
+    {
+        return $this->belongsTo(Credito::class, 'credito_padre_id', 'num_prog');
+    }
+
+    public function creditosHijos()
+    {
+        return $this->hasMany(Credito::class, 'credito_padre_id', 'num_prog');
+    }
+
+    public function refinanciamientos()
+    {
+        return $this->hasMany(Refinanciamiento::class, 'num_prog_nuevo', 'num_prog');
     }
 }

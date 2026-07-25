@@ -14,6 +14,11 @@ class Grupo extends Model
     protected $fillable = [
         'nombre_grupo',
         'id_asesor',
+        'es_socio_preferencial',
+    ];
+
+    protected $casts = [
+        'es_socio_preferencial' => 'boolean',
     ];
 
     public function clientes()
