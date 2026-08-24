@@ -38,6 +38,8 @@ class Credito extends Model
         'tabla_amortizacion',
         'credito_padre_id',
         'dias_mora_cache',
+        'ubicacion_expediente',
+        'notas_expediente',
     ];
 
     protected $casts = [
@@ -83,5 +85,10 @@ class Credito extends Model
     public function refinanciamientos()
     {
         return $this->hasMany(Refinanciamiento::class, 'num_prog_nuevo', 'num_prog');
+    }
+
+    public function documentos()
+    {
+        return $this->hasMany(DocumentoCredito::class, 'num_prog', 'num_prog');
     }
 }

@@ -124,7 +124,10 @@ class CreditoController extends Controller
     public function show($id)
     {
         $credito = Credito::with([
-            'cliente',
+            'documentos.usuario',
+            'cliente.avales',
+            'cliente.documentos',
+            'cliente.referencias',
             'grupo.clientes',
             'grupo.asesor',
             'asesor',

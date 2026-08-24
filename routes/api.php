@@ -15,6 +15,7 @@ use App\Http\Controllers\CarteraController;
 use App\Http\Controllers\RefinanciamientoController;
 use App\Http\Controllers\HistorialController;
 use App\Http\Controllers\DocumentoClienteController;
+use App\Http\Controllers\DocumentoCreditoController;
 use App\Http\Controllers\InversionistaController;
 use App\Http\Controllers\CapitalController;
 use App\Http\Controllers\GastoController;
@@ -88,10 +89,16 @@ Route::middleware('auth:api')->group(function () {
     Route::post('clientes/{id}/reactivar', [HistorialController::class, 'reactivar']);
     Route::get('grupos/{id}/historial', [HistorialController::class, 'grupo']);
 
-    // Documentos KYC
+    // Documentos KYC Cliente
     Route::get('clientes/{id}/documentos', [DocumentoClienteController::class, 'index']);
     Route::post('clientes/{id}/documentos', [DocumentoClienteController::class, 'store']);
     Route::delete('clientes/{id}/documentos/{docId}', [DocumentoClienteController::class, 'destroy']);
+
+    // Expediente y Documentos del Préstamo (Pagarés, Cartas, Tarjetas firmadas)
+    Route::get('creditos/{num_prog}/documentos', [DocumentoCreditoController::class, 'index']);
+    Route::post('creditos/{num_prog}/documentos', [DocumentoCreditoController::class, 'store']);
+    Route::delete('creditos/{num_prog}/documentos/{docId}', [DocumentoCreditoController::class, 'destroy']);
+    Route::put('creditos/{num_prog}/expediente-fisico', [DocumentoCreditoController::class, 'updateExpedienteFisico']);
 
     // Contabilidad
     Route::get('inversionistas', [InversionistaController::class, 'index']);
