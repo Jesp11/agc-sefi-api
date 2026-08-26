@@ -214,6 +214,15 @@ class AsesorController extends Controller
         $asesor = Asesor::findOrFail($id);
         $data = $request->validated();
 
+        if (isset($data['curp'])) {
+            $data['curp'] = strtoupper($data['curp']);
+            $data['cumpleanos'] = $this->asesorService->cumpleanosFromCurp($data['curp']);
+        }
+
+        if (isset($data['nombre_asesor']) && $asesor->user) {
+            $asesor->user->update(['name' => $data['nombre_asesor']]);
+        }
+
         if ($request->boolean('delete_ine')) {
             if ($asesor->ine_path) Storage::disk('public')->delete($asesor->ine_path);
             $data['ine_path'] = null;
@@ -234,7 +243,7 @@ class AsesorController extends Controller
         $asesor->update($data);
         return response()->json([
             'message' => 'Asesor actualizado exitosamente',
-            'data' => $asesor
+            'data' => $asesor->fresh(['user', 'creditos'])
         ]);
     }
 

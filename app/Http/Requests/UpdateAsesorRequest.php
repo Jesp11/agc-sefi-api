@@ -22,9 +22,12 @@ class UpdateAsesorRequest extends FormRequest
      */
     public function rules(): array
     {
+        $asesorParam = $this->route('asesore') ?? $this->route('asesor') ?? $this->route('id');
+        $asesorId = is_object($asesorParam) ? ($asesorParam->id ?? null) : $asesorParam;
+
         return [
             'nombre_asesor' => 'sometimes|string|max:255',
-            'curp'          => 'sometimes|string|size:18|unique:asesores,curp,' . $this->route('asesor'),
+            'curp'          => 'sometimes|string|size:18|unique:asesores,curp,' . $asesorId . ',id',
             'telefono'      => 'nullable|string|max:20',
             'ine'           => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:5120',
             'ine_2'         => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:5120',
