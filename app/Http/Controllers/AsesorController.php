@@ -124,6 +124,25 @@ class AsesorController extends Controller
         return response()->json($asesor);
     }
 
+    public function verIne($id, $slot)
+    {
+        $asesor = Asesor::findOrFail($id);
+        $path = ((int) $slot === 2) ? $asesor->ine_path_2 : $asesor->ine_path;
+
+        if (! $path || ! Storage::disk('public')->exists($path)) {
+            return response()->json(['message' => 'Archivo no encontrado en el servidor'], 404);
+        }
+
+        $mimeType = Storage::disk('public')->mimeType($path) ?: 'application/octet-stream';
+        $file = Storage::disk('public')->get($path);
+
+        return response($file, 200, [
+            'Content-Type' => $mimeType,
+            'Content-Disposition' => 'inline; filename="' . basename($path) . '"',
+            'Cache-Control' => 'no-cache, private',
+        ]);
+    }
+
     public function crearAcceso(Request $request, $id)
     {
         $asesor = Asesor::findOrFail($id);

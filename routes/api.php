@@ -47,6 +47,7 @@ Route::middleware('auth:api')->group(function () {
     Route::apiResource('clientes', ClienteController::class);
     Route::get('asesores/export', [AsesorController::class, 'export']);
     Route::post('asesores/import', [AsesorController::class, 'import']);
+    Route::get('asesores/{id}/ine/{slot}', [AsesorController::class, 'verIne']);
     Route::post('asesores/{id}/acceso', [AsesorController::class, 'crearAcceso'])->middleware('role:admin');
     Route::put('asesores/{id}/acceso', [AsesorController::class, 'actualizarAcceso'])->middleware('role:admin');
     Route::apiResource('asesores', AsesorController::class);

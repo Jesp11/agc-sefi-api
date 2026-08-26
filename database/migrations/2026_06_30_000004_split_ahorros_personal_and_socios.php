@@ -15,21 +15,26 @@ return new class extends Migration
             return;
         }
 
-        if (Schema::hasColumn('ahorros_socio', 'asesor_id') && !Schema::hasTable('ahorros_personal')) {
-            Schema::rename('ahorros_socio', 'ahorros_personal');
-            Schema::rename('ahorro_socio_movimientos', 'ahorro_personal_movimientos');
+        if (Schema::hasColumn('ahorros_socio', 'asesor_id')) {
+            if (!Schema::hasTable('ahorros_personal')) {
+                Schema::rename('ahorros_socio', 'ahorros_personal');
+                Schema::rename('ahorro_socio_movimientos', 'ahorro_personal_movimientos');
 
-            Schema::table('ahorro_personal_movimientos', function (Blueprint $table) {
-                $table->dropForeign(['ahorro_socio_id']);
-            });
+                Schema::table('ahorro_personal_movimientos', function (Blueprint $table) {
+                    $table->dropForeign(['ahorro_socio_id']);
+                });
 
-            Schema::table('ahorro_personal_movimientos', function (Blueprint $table) {
-                $table->renameColumn('ahorro_socio_id', 'ahorro_personal_id');
-            });
+                Schema::table('ahorro_personal_movimientos', function (Blueprint $table) {
+                    $table->renameColumn('ahorro_socio_id', 'ahorro_personal_id');
+                });
 
-            Schema::table('ahorro_personal_movimientos', function (Blueprint $table) {
-                $table->foreign('ahorro_personal_id')->references('id')->on('ahorros_personal')->cascadeOnDelete();
-            });
+                Schema::table('ahorro_personal_movimientos', function (Blueprint $table) {
+                    $table->foreign('ahorro_personal_id')->references('id')->on('ahorros_personal')->cascadeOnDelete();
+                });
+            } else {
+                Schema::dropIfExists('ahorro_socio_movimientos');
+                Schema::dropIfExists('ahorros_socio');
+            }
         }
 
         if (!Schema::hasTable('socios')) {
