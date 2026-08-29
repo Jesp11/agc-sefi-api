@@ -22,6 +22,7 @@ class GastoController extends Controller
             'monto' => 'required|numeric|min:0.01',
             'fecha' => 'required|date',
             'categoria' => 'nullable|string',
+            'cuenta' => 'nullable|string|max:30',
         ]);
 
         if (!empty($data['catalogo_gasto_id'])) {

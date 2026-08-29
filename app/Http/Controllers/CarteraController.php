@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Credito;
+use App\Support\RoleHelper;
 use App\Services\CarteraService;
 use App\Services\MoraCalculationService;
 use Illuminate\Http\Request;
@@ -72,6 +73,22 @@ class CarteraController extends Controller
         });
 
         return response()->json($creditos);
+    }
+
+    public function moraActiva(Request $request)
+    {
+        return response()->json($this->reportService()->carteraMoraClasificada(
+            'mora-activa',
+            $this->scopedAsesorId($request)
+        ));
+    }
+
+    public function moraMuerta(Request $request)
+    {
+        return response()->json($this->reportService()->carteraMoraClasificada(
+            'mora-muerta',
+            $this->scopedAsesorId($request)
+        ));
     }
 
     public function cerrados(Request $request)
@@ -159,7 +176,7 @@ class CarteraController extends Controller
     private function scopedAsesorId(Request $request): ?int
     {
         $user = auth()->user();
-        if ($user && $user->role?->nombre === 'asesor') {
+        if ($user && RoleHelper::isFieldLike($user->role?->nombre)) {
             return $user->id_asesor;
         }
         return $request->query('id_asesor') ? (int) $request->query('id_asesor') : null;
@@ -169,9 +186,14 @@ class CarteraController extends Controller
     private function denyIfNotOwnCartera(Credito $credito): ?\Illuminate\Http\JsonResponse
     {
         $user = auth()->user();
-        if ($user && $user->role?->nombre === 'asesor' && (int) $credito->id_asesor !== (int) $user->id_asesor) {
+        if ($user && RoleHelper::isFieldLike($user->role?->nombre) && (int) $credito->id_asesor !== (int) $user->id_asesor) {
             return response()->json(['message' => 'No puedes modificar créditos de otra cartera.'], 403);
         }
         return null;
+    }
+
+    private function reportService(): \App\Services\ReportService
+    {
+        return app(\App\Services\ReportService::class);
     }
 }

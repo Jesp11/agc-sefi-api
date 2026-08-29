@@ -247,8 +247,13 @@ class FlujoCajaService
             ->orderByDesc('id')
             ->value('saldo_resultante');
 
-        $distribucion = $movimientosMes
+        $distribucionIngresos = $movimientosMes
             ->filter(fn ($m) => $m->cuenta && $m->tipo === 'Ingreso')
+            ->groupBy('cuenta')
+            ->map(fn ($items) => round((float) $items->sum('monto'), 2));
+
+        $distribucionEgresos = $movimientosMes
+            ->filter(fn ($m) => $m->cuenta && $m->tipo === 'Egreso')
             ->groupBy('cuenta')
             ->map(fn ($items) => round((float) $items->sum('monto'), 2));
 
@@ -261,22 +266,32 @@ class FlujoCajaService
             ->sum('saldo_pendiente');
 
         $mora = Credito::where('estado', 'EnMora')->sum('saldo_pendiente');
-        $capitalPasivo = app(CapitalService::class)->capitalPasivo()['capital_pasivo'];
         $ahorroPersonal = AhorroPersonal::sum('saldo');
         $ahorroGrupal = AhorroSocio::sum('saldo');
+        $saldoInicialMes = round((float) ($saldoAnterior ?? 0), 2);
+        $disponible = round($saldoInicialMes + (float) $ingresos - (float) $egresos, 2);
+        $gastosOperativos = round((float) $movimientosMes
+            ->where('tipo', 'Egreso')
+            ->where('categoria', 'GastoOperativo')
+            ->sum('monto'), 2);
 
         return [
             'anio' => $anio,
             'mes' => $mes,
+            'saldo_inicial_mes' => $saldoInicialMes,
             'total_ingresos' => round((float) $ingresos, 2),
             'total_egresos' => round((float) $egresos, 2),
             'saldo_anterior' => round((float) ($saldoAnterior ?? 0), 2),
             'saldo_actual' => round((float) ($ultimoDelMes?->saldo_resultante ?? $saldoAnterior ?? 0), 2),
-            'distribucion_cuentas' => $distribucion,
+            'disponible' => $disponible,
+            'gastos_operativos' => $gastosOperativos,
+            'distribucion_cuentas' => [
+                'ingresos' => $distribucionIngresos,
+                'egresos' => $distribucionEgresos,
+            ],
             'cartera_individual' => round((float) $carteraIndividual, 2),
             'cartera_grupal' => round((float) $carteraGrupal, 2),
             'mora' => round((float) $mora, 2),
-            'capital_pasivo' => round((float) $capitalPasivo, 2),
             'ahorro_personal' => round((float) $ahorroPersonal, 2),
             'ahorro_grupal' => round((float) $ahorroGrupal, 2),
         ];

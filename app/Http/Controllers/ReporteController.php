@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Support\RoleHelper;
 use App\Services\AhorroPersonalService;
 use App\Services\AhorroSocioService;
 use App\Services\ReportService;
@@ -14,7 +15,7 @@ class ReporteController extends Controller
     private function scopedAsesorId(Request $request): ?int
     {
         $user = auth()->user();
-        if ($user && $user->role?->nombre === 'asesor') {
+        if ($user && RoleHelper::isFieldLike($user->role?->nombre)) {
             return $user->id_asesor;
         }
         return $request->query('id_asesor') ? (int) $request->query('id_asesor') : null;
@@ -89,6 +90,21 @@ class ReporteController extends Controller
         return response()->json($this->reportService->reporteInversionistas());
     }
 
+    public function cierreMensual(Request $request)
+    {
+        return response()->json($this->reportService->cierreMensual(
+            $request->query('mes')
+        ));
+    }
+
+    public function estadoFinancieroInversionistas(Request $request)
+    {
+        return response()->json($this->reportService->estadoFinancieroInversionistas(
+            $request->query('fecha_inicio'),
+            $request->query('fecha_fin')
+        ));
+    }
+
     public function ahorros()
     {
         return response()->json($this->reportService->reporteAhorros());
@@ -104,6 +120,46 @@ class ReporteController extends Controller
     {
         $anio = (int) ($request->query('anio') ?? now()->year);
         return response()->json($ahorroPersonalService->resumenAnual($anio));
+    }
+
+    public function carteraAhorro()
+    {
+        return response()->json($this->reportService->carteraAhorro());
+    }
+
+    public function gastosOperativos(Request $request)
+    {
+        return response()->json($this->reportService->gastosOperativos(
+            $request->query('fecha_inicio'),
+            $request->query('fecha_fin'),
+            $request->query('categoria'),
+            $request->query('cuenta')
+        ));
+    }
+
+    public function gestorSemanal(Request $request)
+    {
+        return response()->json($this->reportService->reporteGestor(
+            'semanal',
+            $this->scopedAsesorId($request) ?? ($request->query('id_asesor') ? (int) $request->query('id_asesor') : null),
+            $request->query('semana_inicio')
+        ));
+    }
+
+    public function gestorMensual(Request $request)
+    {
+        return response()->json($this->reportService->reporteGestor(
+            'mensual',
+            $this->scopedAsesorId($request) ?? ($request->query('id_asesor') ? (int) $request->query('id_asesor') : null),
+            $request->query('mes')
+        ));
+    }
+
+    public function clientesSinRenovacion(Request $request)
+    {
+        return response()->json($this->reportService->clientesSinRenovacion(
+            $this->scopedAsesorId($request) ?? ($request->query('id_asesor') ? (int) $request->query('id_asesor') : null)
+        ));
     }
 
     public function comparativas(Request $request)
@@ -125,6 +181,9 @@ class ReporteController extends Controller
 
     public function semanal(Request $request)
     {
-        return response()->json($this->reportService->reporteSemanal($request->query('semana_inicio')));
+        return response()->json($this->reportService->reporteSemanal(
+            $request->query('semana_inicio'),
+            $this->scopedAsesorId($request)
+        ));
     }
 }

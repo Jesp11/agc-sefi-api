@@ -10,12 +10,14 @@ class CicloHistorial extends Model
 
     protected $fillable = [
         'id_cliente', 'id_grupo', 'ciclo', 'num_prog',
-        'fecha_inicio', 'fecha_fin', 'resultado',
+        'fecha_inicio', 'fecha_fin', 'fecha_consulta', 'resultado', 'snapshot',
     ];
 
     protected $casts = [
         'fecha_inicio' => 'date',
         'fecha_fin' => 'date',
+        'fecha_consulta' => 'date',
+        'snapshot' => 'array',
     ];
 
     public function credito()

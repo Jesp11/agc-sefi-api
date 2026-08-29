@@ -10,8 +10,28 @@ use InvalidArgumentException;
 
 class AsesorService
 {
-    public function generateIdAsesor(string $nombre): string
+    public function getPrefixByRole(?string $rolLaboral): string
     {
+        if (empty($rolLaboral)) {
+            return 'GC';
+        }
+
+        $normalized = mb_strtoupper(trim($rolLaboral), 'UTF-8');
+
+        return match (true) {
+            str_contains($normalized, 'GESTOR') || str_contains($normalized, 'COBRANZA') => 'GC',
+            str_contains($normalized, 'FINANCIERO') || str_contains($normalized, 'ASESOR') => 'AF',
+            str_contains($normalized, 'ADMIN') => 'AD',
+            str_contains($normalized, 'GEREN') => 'GE',
+            str_contains($normalized, 'CONTAB') => 'CO',
+            default => 'EMP',
+        };
+    }
+
+    public function generateIdAsesor(string $nombre, ?string $rolLaboral = null): string
+    {
+        $rolePrefix = $this->getPrefixByRole($rolLaboral);
+
         $words = explode(' ', strtoupper(trim($nombre)));
         $initials = '';
         foreach ($words as $word) {
@@ -19,7 +39,7 @@ class AsesorService
                 $initials .= substr($word, 0, 1);
             }
         }
-        $prefix = 'AF' . $initials;
+        $prefix = $rolePrefix . $initials;
 
         $lastAsesor = Asesor::where('id_asesor', 'like', $prefix . '%')
             ->orderBy('id_asesor', 'desc')
@@ -49,7 +69,8 @@ class AsesorService
 
     public function create(array $data): Asesor
     {
-        $data['id_asesor'] = $this->generateIdAsesor($data['nombre_asesor']);
+        $data['rol_laboral'] = $data['rol_laboral'] ?? 'Gestor de Cobranza';
+        $data['id_asesor'] = $this->generateIdAsesor($data['nombre_asesor'], $data['rol_laboral']);
         $data['curp'] = strtoupper($data['curp']);
         $data['cumpleanos'] = $this->cumpleanosFromCurp($data['curp']);
 
@@ -67,6 +88,7 @@ class AsesorService
         $payload = [
             'nombre_asesor' => $data['nombre_asesor'],
             'cumpleanos' => $this->cumpleanosFromCurp($curp),
+            'rol_laboral' => $data['rol_laboral'] ?? 'Gestor de Cobranza',
         ];
 
         if (array_key_exists('telefono', $data)) {
@@ -75,13 +97,27 @@ class AsesorService
 
         if ($asesor) {
             $asesor->update($payload);
-
-            return ['asesor' => $asesor->fresh(), 'action' => 'updated'];
+            $action = 'updated';
+            $savedAsesor = $asesor->fresh();
+        } else {
+            $payload['curp'] = $curp;
+            $savedAsesor = $this->create($payload);
+            $action = 'created';
         }
 
-        $payload['curp'] = $curp;
+        // Si se proporcionó email en la plantilla, crear o actualizar acceso
+        if (!empty($data['email'])) {
+            $email = strtolower(trim($data['email']));
+            $password = !empty($data['password']) ? trim($data['password']) : null;
 
-        return ['asesor' => $this->create($payload), 'action' => 'created'];
+            if ($savedAsesor->user()->exists()) {
+                $this->actualizarAcceso($savedAsesor, $email, $password);
+            } else {
+                $this->crearAcceso($savedAsesor, $email, $password);
+            }
+        }
+
+        return ['asesor' => $savedAsesor->fresh(['user']), 'action' => $action];
     }
 
     /**
@@ -100,9 +136,11 @@ class AsesorService
             throw new InvalidArgumentException('El correo ya está registrado en otro usuario.');
         }
 
-        $role = Role::where('nombre', 'asesor')->first();
+        $role = Role::whereIn('nombre', ['Gestor de Cobranza', 'asesor'])
+            ->orderByRaw("CASE WHEN nombre = 'Gestor de Cobranza' THEN 0 ELSE 1 END")
+            ->first();
         if (!$role) {
-            throw new InvalidArgumentException('No existe el rol asesor en el sistema.');
+            throw new InvalidArgumentException('No existe el rol operativo de cobranza en el sistema.');
         }
 
         $plainPassword = $password ?: $this->generarPasswordTemporal();

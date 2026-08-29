@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Cliente;
 use App\Models\Credito;
+use App\Support\RoleHelper;
 use App\Http\Requests\StoreClienteRequest;
 use App\Http\Requests\UpdateClienteRequest;
 use App\Services\ClienteService;
@@ -168,7 +169,7 @@ class ClienteController extends Controller
         $asesorAnterior = $cliente->id_asesor;
 
         if (array_key_exists('id_asesor', $data)) {
-            $esAdmin = $request->user()?->role?->nombre === 'admin';
+            $esAdmin = RoleHelper::isAdminLike($request->user()?->role?->nombre);
             if (!$esAdmin) {
                 return response()->json(['message' => 'Solo un administrador puede cambiar el asesor.'], 403);
             }

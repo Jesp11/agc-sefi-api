@@ -17,6 +17,8 @@ class InversionistaController extends Controller
     {
         $data = $request->validate([
             'nombre' => 'required|string|max:255',
+            'tipo_entidad' => 'nullable|string|max:100',
+            'origen_fondeo' => 'nullable|string|max:255',
             'contacto' => 'nullable|string',
             'telefono' => 'nullable|string',
             'email' => 'nullable|email',
@@ -32,6 +34,8 @@ class InversionistaController extends Controller
         $inv = Inversionista::findOrFail($id);
         $inv->update($request->validate([
             'nombre' => 'sometimes|string|max:255',
+            'tipo_entidad' => 'nullable|string|max:100',
+            'origen_fondeo' => 'nullable|string|max:255',
             'contacto' => 'nullable|string',
             'telefono' => 'nullable|string',
             'email' => 'nullable|email',

@@ -24,7 +24,11 @@ class PagoController extends Controller
     public function store(StorePagoRequest $request, $numProg)
     {
         $credito = Credito::with(['cliente', 'grupo', 'asesor'])->findOrFail($numProg);
-        $result = $this->pagoService->registrar($credito, $request->validated());
+        try {
+            $result = $this->pagoService->registrar($credito, $request->validated());
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
         $credito = $credito->fresh()->load(['cliente', 'grupo', 'asesor', 'pagos']);
 
         $message = $result['multa']

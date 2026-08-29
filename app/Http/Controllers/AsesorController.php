@@ -23,11 +23,13 @@ class AsesorController extends Controller
 
     public function export()
     {
-        $asesores = Asesor::orderBy('nombre_asesor')->get([
+        $asesores = Asesor::with(['user:id,email,id_asesor'])->orderBy('nombre_asesor')->get([
+            'id',
             'id_asesor',
             'nombre_asesor',
             'curp',
             'telefono',
+            'rol_laboral',
             'cumpleanos',
             'created_at',
         ]);
@@ -42,6 +44,9 @@ class AsesorController extends Controller
             'asesores.*.nombre_asesor' => 'required|string|max:255',
             'asesores.*.curp' => 'required|string|size:18',
             'asesores.*.telefono' => 'nullable|string|max:20',
+            'asesores.*.rol_laboral' => 'nullable|string|max:100',
+            'asesores.*.email' => 'nullable|email|max:100',
+            'asesores.*.password' => 'nullable|string|min:4|max:50',
         ]);
 
         $created = 0;
@@ -54,6 +59,9 @@ class AsesorController extends Controller
                 'nombre_asesor' => 'required|string|max:255',
                 'curp' => 'required|string|size:18',
                 'telefono' => 'nullable|string|max:20',
+                'rol_laboral' => 'nullable|string|max:100',
+                'email' => 'nullable|email|max:100',
+                'password' => 'nullable|string|min:4|max:50',
             ]);
 
             if ($validator->fails()) {
@@ -71,11 +79,18 @@ class AsesorController extends Controller
                 unset($data['telefono']);
             }
 
-            $result = $this->asesorService->upsertFromImport($data);
-            if ($result['action'] === 'created') {
-                $created++;
-            } else {
-                $updated++;
+            try {
+                $result = $this->asesorService->upsertFromImport($data);
+                if ($result['action'] === 'created') {
+                    $created++;
+                } else {
+                    $updated++;
+                }
+            } catch (\InvalidArgumentException $e) {
+                $errors[] = [
+                    'fila' => $rowNumber,
+                    'mensajes' => [$e->getMessage()],
+                ];
             }
         }
 
@@ -120,7 +135,11 @@ class AsesorController extends Controller
 
     public function show($id)
     {
-        $asesor = Asesor::with(['creditos', 'user:id,name,email,id_asesor,role_id,created_at'])->findOrFail($id);
+        $asesor = Asesor::with([
+            'creditos.cliente',
+            'creditos.grupo',
+            'user:id,name,email,id_asesor,role_id,created_at'
+        ])->findOrFail($id);
         return response()->json($asesor);
     }
 
@@ -221,6 +240,13 @@ class AsesorController extends Controller
 
         if (isset($data['nombre_asesor']) && $asesor->user) {
             $asesor->user->update(['name' => $data['nombre_asesor']]);
+        }
+
+        if (isset($data['rol_laboral']) && $asesor->user) {
+            $matchingRole = \App\Models\Role::where('nombre', $data['rol_laboral'])->first();
+            if ($matchingRole) {
+                $asesor->user->update(['role_id' => $matchingRole->id]);
+            }
         }
 
         if ($request->boolean('delete_ine')) {

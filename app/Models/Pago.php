@@ -14,6 +14,7 @@ class Pago extends Model
     protected $fillable = [
         'num_prog',
         'monto',
+        'ahorro_personal_monto',
         'fecha',
         'hora',
         'metodo_pago',
@@ -24,6 +25,7 @@ class Pago extends Model
 
     protected $casts = [
         'monto' => 'decimal:2',
+        'ahorro_personal_monto' => 'decimal:2',
         'fecha' => 'date',
     ];
 

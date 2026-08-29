@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Support\RoleHelper;
 use Closure;
 use Illuminate\Http\Request;
 
@@ -15,7 +16,7 @@ class EnsureRole
             return response()->json(['message' => 'No autorizado.'], 403);
         }
 
-        if (!in_array($user->role->nombre, $roles)) {
+        if (!in_array($user->role->nombre, RoleHelper::expands($roles), true)) {
             return response()->json(['message' => 'Acceso denegado para este rol.'], 403);
         }
 

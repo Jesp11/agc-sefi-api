@@ -17,6 +17,7 @@ class Asesor extends Model
         'curp',
         'cumpleanos',
         'telefono',
+        'rol_laboral',
         'ine_path',
         'ine_path_2',
     ];

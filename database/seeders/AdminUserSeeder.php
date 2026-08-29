@@ -15,12 +15,17 @@ class AdminUserSeeder extends Seeder
     {
         $adminRole = Role::firstOrCreate(['nombre' => 'admin']);
         Role::firstOrCreate(['nombre' => 'asesor']);
+        Role::firstOrCreate(['nombre' => 'Administrador']);
+        Role::firstOrCreate(['nombre' => 'Gerencia']);
+        Role::firstOrCreate(['nombre' => 'Contabilidad']);
+        Role::firstOrCreate(['nombre' => 'Asesor Financiero']);
+        Role::firstOrCreate(['nombre' => 'Gestor de Cobranza']);
 
         User::updateOrCreate(
-            ['email' => 'admin@sefi.com'],
+            ['email' => 'admin@agc.com'],
             [
-                'name' => 'Administrador SEFI',
-                'password' => 'admin123456',
+                'name' => 'Administrador',
+                'password' => '4gcGl0b4l/?', // password
                 'email_verified_at' => now(),
                 'role_id' => $adminRole->id,
             ]

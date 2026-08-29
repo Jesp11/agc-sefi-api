@@ -45,6 +45,7 @@ class CapitalService
                 'monto' => $data['monto'],
                 'fecha' => $data['fecha'],
                 'categoria' => $data['categoria'] ?? null,
+                'cuenta' => $data['cuenta'] ?? null,
                 'catalogo_gasto_id' => $data['catalogo_gasto_id'] ?? null,
                 'registrado_por' => auth()->id(),
             ]);

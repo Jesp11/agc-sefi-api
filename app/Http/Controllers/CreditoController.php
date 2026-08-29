@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Credito;
 use App\Models\Cliente;
 use App\Models\Grupo;
+use App\Support\RoleHelper;
 use App\Http\Requests\StoreCreditoRequest;
 use App\Http\Requests\UpdateCreditoRequest;
 use App\Services\CicloService;
@@ -23,7 +24,7 @@ class CreditoController extends Controller
         $query = Credito::with(['cliente', 'grupo', 'asesor']);
 
         $user = auth()->user();
-        if ($user && $user->role?->nombre === 'asesor' && $user->id_asesor) {
+        if ($user && RoleHelper::isFieldLike($user->role?->nombre) && $user->id_asesor) {
             $query->where('id_asesor', $user->id_asesor);
         }
 

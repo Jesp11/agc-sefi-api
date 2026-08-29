@@ -23,6 +23,14 @@ class NominaController extends Controller
         $data = $request->validate([
             'fecha_inicio' => 'required|date',
             'fecha_fin' => 'required|date|after_or_equal:fecha_inicio',
+            'ajustes' => 'nullable|array',
+            'ajustes.*.empleado_id' => 'required|integer|exists:empleados,id',
+            'ajustes.*.percepciones' => 'nullable|array',
+            'ajustes.*.percepciones.*.concepto' => 'required_with:ajustes.*.percepciones|string|max:255',
+            'ajustes.*.percepciones.*.monto' => 'required_with:ajustes.*.percepciones|numeric|min:0',
+            'ajustes.*.deducciones' => 'nullable|array',
+            'ajustes.*.deducciones.*.concepto' => 'required_with:ajustes.*.deducciones|string|max:255',
+            'ajustes.*.deducciones.*.monto' => 'required_with:ajustes.*.deducciones|numeric|min:0',
         ]);
 
         return DB::transaction(function () use ($data) {
@@ -33,20 +41,41 @@ class NominaController extends Controller
             ]);
 
             $empleados = Empleado::where('activo', true)->get();
+            $ajustesPeriodo = collect($data['ajustes'] ?? [])->keyBy('empleado_id');
             $totalDispersado = 0;
 
             foreach ($empleados as $empleado) {
+                $percepcionesBase = collect($empleado->percepciones_config ?? [])
+                    ->map(fn ($item) => ['concepto' => $item['concepto'], 'monto' => round((float) $item['monto'], 2)]);
+                $deduccionesBase = collect($empleado->deducciones_config ?? [])
+                    ->map(fn ($item) => ['concepto' => $item['concepto'], 'monto' => round((float) $item['monto'], 2)]);
+                $ajuste = $ajustesPeriodo->get($empleado->id, []);
+                $percepcionesPeriodo = collect($ajuste['percepciones'] ?? [])
+                    ->map(fn ($item) => ['concepto' => $item['concepto'], 'monto' => round((float) $item['monto'], 2)]);
+                $deduccionesPeriodo = collect($ajuste['deducciones'] ?? [])
+                    ->map(fn ($item) => ['concepto' => $item['concepto'], 'monto' => round((float) $item['monto'], 2)]);
+
+                $totalPercepciones = round((float) $percepcionesBase->sum('monto') + (float) $percepcionesPeriodo->sum('monto'), 2);
+                $totalDeduccionesExtras = round((float) $deduccionesBase->sum('monto') + (float) $deduccionesPeriodo->sum('monto'), 2);
                 $retencion = $empleado->porcentaje_ahorro
                     ? round($empleado->sueldo_base * ($empleado->porcentaje_ahorro / 100), 2)
                     : 0;
-                $neto = $empleado->sueldo_base - $retencion;
+                $neto = round($empleado->sueldo_base + $totalPercepciones - $retencion - $totalDeduccionesExtras, 2);
 
                 NominaDetalle::create([
                     'periodo_id' => $periodo->id,
                     'empleado_id' => $empleado->id,
                     'sueldo_bruto' => $empleado->sueldo_base,
+                    'total_percepciones' => $totalPercepciones,
                     'retencion_ahorro' => $retencion,
+                    'total_deducciones' => $totalDeduccionesExtras,
                     'sueldo_neto' => $neto,
+                    'detalle_ajustes' => [
+                        'percepciones_config' => $percepcionesBase->values()->all(),
+                        'deducciones_config' => $deduccionesBase->values()->all(),
+                        'percepciones_periodo' => $percepcionesPeriodo->values()->all(),
+                        'deducciones_periodo' => $deduccionesPeriodo->values()->all(),
+                    ],
                 ]);
 
                 if ($retencion > 0) {

@@ -29,6 +29,7 @@ class UpdateAsesorRequest extends FormRequest
             'nombre_asesor' => 'sometimes|string|max:255',
             'curp'          => 'sometimes|string|size:18|unique:asesores,curp,' . $asesorId . ',id',
             'telefono'      => 'nullable|string|max:20',
+            'rol_laboral'   => 'nullable|string|max:100',
             'ine'           => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:5120',
             'ine_2'         => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:5120',
             'delete_ine'    => 'nullable|boolean',

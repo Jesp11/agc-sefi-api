@@ -26,6 +26,7 @@ class StoreAsesorRequest extends FormRequest
             'nombre_asesor' => 'required|string|max:255',
             'curp'          => 'required|string|size:18|unique:asesores,curp',
             'telefono'      => 'nullable|string|max:20',
+            'rol_laboral'   => 'nullable|string|max:100',
             'ine'           => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:5120',
             'ine_2'         => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:5120',
         ];

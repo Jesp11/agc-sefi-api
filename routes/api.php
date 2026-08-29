@@ -28,6 +28,7 @@ use App\Http\Controllers\AhorroPersonalController;
 use App\Http\Controllers\SocioController;
 use App\Http\Controllers\AhorroSocioController;
 use App\Http\Controllers\ReporteController;
+use App\Http\Controllers\BusquedaGlobalController;
 
 Route::group([
     'middleware' => 'api',
@@ -42,6 +43,7 @@ Route::group([
 });
 
 Route::middleware('auth:api')->group(function () {
+    Route::get('busqueda-global', [BusquedaGlobalController::class, 'buscar']);
     Route::get('clientes/export', [ClienteController::class, 'export']);
     Route::post('clientes/import', [ClienteController::class, 'import']);
     Route::apiResource('clientes', ClienteController::class);
@@ -76,6 +78,8 @@ Route::middleware('auth:api')->group(function () {
     // Cartera (lectura para asesor; cambios de estado solo admin)
     Route::get('cartera/activa', [CarteraController::class, 'activa']);
     Route::get('cartera/mora', [CarteraController::class, 'mora']);
+    Route::get('cartera/mora-activa', [CarteraController::class, 'moraActiva']);
+    Route::get('cartera/mora-muerta', [CarteraController::class, 'moraMuerta']);
     Route::get('cartera/cerrados', [CarteraController::class, 'cerrados']);
     Route::get('cartera/cobros-del-dia', [CarteraController::class, 'cobrosDelDia']);
     // Asesor y admin: mover a mora o cerrar sin renovación
@@ -146,9 +150,16 @@ Route::middleware('auth:api')->group(function () {
     Route::get('reportes/asesor/por-cerrar', [ReporteController::class, 'asesorPorCerrar']);
     Route::get('reportes/semanal', [ReporteController::class, 'semanal']);
     Route::get('reportes/inversionistas', [ReporteController::class, 'inversionistas']);
+    Route::get('reportes/cierre-mensual', [ReporteController::class, 'cierreMensual']);
+    Route::get('reportes/inversionistas/estado-financiero', [ReporteController::class, 'estadoFinancieroInversionistas']);
     Route::get('reportes/ahorros', [ReporteController::class, 'ahorros']);
     Route::get('reportes/ahorros-personal', [ReporteController::class, 'ahorrosPersonal']);
     Route::get('reportes/ahorros-socios', [ReporteController::class, 'ahorrosSocios']);
+    Route::get('reportes/cartera-ahorro', [ReporteController::class, 'carteraAhorro']);
+    Route::get('reportes/gastos-operativos', [ReporteController::class, 'gastosOperativos']);
+    Route::get('reportes/gestor/semanal', [ReporteController::class, 'gestorSemanal']);
+    Route::get('reportes/gestor/mensual', [ReporteController::class, 'gestorMensual']);
+    Route::get('reportes/clientes-sin-renovacion', [ReporteController::class, 'clientesSinRenovacion']);
     Route::get('reportes/comparativas', [ReporteController::class, 'comparativas']);
 
     // Simulación

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\RoleHelper;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
@@ -51,6 +52,11 @@ class User extends Authenticatable implements JWTSubject
 
     public function isAdmin(): bool
     {
-        return $this->role?->nombre === 'admin';
+        return RoleHelper::isAdminLike($this->role?->nombre);
+    }
+
+    public function isFieldUser(): bool
+    {
+        return RoleHelper::isFieldLike($this->role?->nombre);
     }
 }

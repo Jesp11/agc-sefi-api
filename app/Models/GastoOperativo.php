@@ -9,7 +9,7 @@ class GastoOperativo extends Model
     protected $table = 'gastos_operativos';
 
     protected $fillable = [
-        'concepto', 'monto', 'fecha', 'categoria', 'catalogo_gasto_id', 'registrado_por',
+        'concepto', 'monto', 'fecha', 'categoria', 'cuenta', 'catalogo_gasto_id', 'registrado_por',
     ];
 
     protected $casts = [

@@ -33,7 +33,9 @@ class CicloService
             'ciclo' => $credito->ciclo,
             'num_prog' => $credito->num_prog,
             'fecha_inicio' => $credito->fecha_otorgacion,
+            'fecha_consulta' => now()->toDateString(),
             'resultado' => 'Activo',
+            'snapshot' => $this->buildSnapshot($credito, 'Activo'),
         ]);
     }
 
@@ -43,7 +45,30 @@ class CicloService
             ->where('resultado', 'Activo')
             ->update([
                 'fecha_fin' => now()->toDateString(),
+                'fecha_consulta' => now()->toDateString(),
                 'resultado' => $resultado,
+                'snapshot' => $this->buildSnapshot($credito, $resultado),
             ]);
+    }
+
+    private function buildSnapshot(Credito $credito, string $resultado): array
+    {
+        $credito->loadMissing(['cliente', 'grupo', 'asesor', 'pagos']);
+
+        return [
+            'resultado' => $resultado,
+            'estado' => $credito->estado,
+            'saldo_pendiente' => round((float) ($credito->saldo_pendiente ?? 0), 2),
+            'monto_otorgado' => round((float) ($credito->monto_otorgado ?? 0), 2),
+            'total' => round((float) ($credito->total ?? 0), 2),
+            'plazos' => (int) ($credito->plazos ?? 0),
+            'valor_ficha' => round((float) ($credito->valor_ficha ?? 0), 2),
+            'dias_mora_cache' => (int) ($credito->dias_mora_cache ?? 0),
+            'ciclo_inicio_mora' => $credito->ciclo_inicio_mora,
+            'total_abonado' => round((float) $credito->pagos->where('tipo', 'Abono')->sum('monto'), 2),
+            'cliente' => $credito->cliente?->only(['id_cliente', 'nombre_completo']),
+            'grupo' => $credito->grupo?->only(['id', 'nombre_grupo']),
+            'asesor' => $credito->asesor?->only(['id', 'id_asesor', 'nombre_asesor']),
+        ];
     }
 }

@@ -2,8 +2,11 @@
 
 namespace App\Services;
 
+use App\Models\AhorroPersonal;
+use App\Models\AhorroPersonalMovimiento;
 use App\Models\Credito;
 use App\Models\Pago;
+use App\Support\RoleHelper;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
@@ -34,13 +37,19 @@ class PagoService
 
             $tipo = $data['tipo'] ?? 'Abono';
             $montoMulta = (float) ($data['monto_multa'] ?? 0);
+            $ahorroPersonalMonto = abs((float) ($data['ahorro_personal_monto'] ?? 0));
             $pagos = [];
+
+            if ($ahorroPersonalMonto > 0 && RoleHelper::isFieldLike(Auth::user()?->role?->nombre)) {
+                throw new \InvalidArgumentException('El gestor de cobranza no puede registrar ahorro personal en abonos.');
+            }
 
             // Compatibilidad: registro solo de multa (sin abono aparte).
             if ($tipo === 'Multa' && $montoMulta <= 0) {
                 $multa = Pago::create([
                     ...$base,
                     'monto' => $data['monto'],
+                    'ahorro_personal_monto' => 0,
                     'tipo' => 'Multa',
                 ]);
                 $pagos[] = $multa;
@@ -57,10 +66,12 @@ class PagoService
             $abono = Pago::create([
                 ...$base,
                 'monto' => $data['monto'],
+                'ahorro_personal_monto' => $ahorroPersonalMonto,
                 'tipo' => 'Abono',
             ]);
             $pagos[] = $abono;
             $this->flujoCajaService->registrarDesdePago($abono, $credito);
+            $this->registrarAhorroPersonalDesdePago($credito, $abono, $ahorroPersonalMonto);
 
             $multa = null;
             if ($montoMulta > 0) {
@@ -97,5 +108,28 @@ class PagoService
             ->orderByDesc('hora')
             ->orderByDesc('id')
             ->get();
+    }
+
+    private function registrarAhorroPersonalDesdePago(Credito $credito, Pago $pago, float $monto): void
+    {
+        if ($monto < 0.01 || ! $credito->id_asesor) {
+            return;
+        }
+
+        $ahorro = AhorroPersonal::firstOrCreate(
+            ['asesor_id' => $credito->id_asesor],
+            ['saldo' => 0]
+        );
+
+        $ahorro->increment('saldo', $monto);
+
+        AhorroPersonalMovimiento::create([
+            'ahorro_personal_id' => $ahorro->id,
+            'tipo' => 'Ingreso',
+            'monto' => $monto,
+            'fecha' => $pago->fecha,
+            'notas' => "Ahorro desde abono #{$pago->id} / crédito #{$credito->num_prog}",
+            'registrado_por' => Auth::id(),
+        ]);
     }
 }

@@ -21,6 +21,7 @@ class StorePagoRequest extends FormRequest
             'metodo_pago' => 'in:Efectivo,Transferencia,Otro',
             'tipo' => 'nullable|in:Abono,Multa',
             'notas' => 'nullable|string|max:500',
+            'ahorro_personal_monto' => 'nullable|numeric|min:0',
         ];
     }
 }
