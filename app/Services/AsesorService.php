@@ -128,7 +128,7 @@ class AsesorService
     public function crearAcceso(Asesor $asesor, string $email, ?string $password = null): array
     {
         if ($asesor->user()->exists()) {
-            throw new InvalidArgumentException('Este asesor ya tiene acceso al sistema. Usa restablecer contraseña.');
+            throw new InvalidArgumentException('Este empleado ya tiene acceso al sistema. Usa restablecer contraseña.');
         }
 
         $email = strtolower(trim($email));
@@ -170,7 +170,7 @@ class AsesorService
     {
         $user = $asesor->user;
         if (!$user) {
-            throw new InvalidArgumentException('Este asesor no tiene acceso. Crea el acceso primero.');
+            throw new InvalidArgumentException('Este empleado no tiene acceso. Crea el acceso primero.');
         }
 
         $updates = [];

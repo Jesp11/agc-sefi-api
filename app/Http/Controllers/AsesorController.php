@@ -116,7 +116,6 @@ class AsesorController extends Controller
     public function store(StoreAsesorRequest $request)
     {
         $data = $request->validated();
-
         if ($request->hasFile('ine')) {
             $data['ine_path'] = $request->file('ine')->store('ines', 'public');
         }
@@ -128,7 +127,7 @@ class AsesorController extends Controller
 
         $asesor = $this->asesorService->create($data);
         return response()->json([
-            'message' => 'Asesor creado exitosamente',
+            'message' => 'Empleado creado exitosamente',
             'data' => $asesor
         ], 201);
     }
@@ -182,7 +181,7 @@ class AsesorController extends Controller
         }
 
         return response()->json([
-            'message' => 'Acceso creado. Comparte el correo y la contraseña temporal con el asesor.',
+            'message' => 'Acceso creado. Comparte el correo y la contraseña temporal con el empleado.',
             'user' => [
                 'id' => $result['user']->id,
                 'name' => $result['user']->name,
@@ -216,7 +215,7 @@ class AsesorController extends Controller
 
         return response()->json([
             'message' => $result['password']
-                ? 'Acceso actualizado. Comparte la nueva contraseña temporal con el asesor.'
+                ? 'Acceso actualizado. Comparte la nueva contraseña temporal con el empleado.'
                 : 'Acceso actualizado.',
             'user' => [
                 'id' => $result['user']->id,
@@ -268,7 +267,7 @@ class AsesorController extends Controller
         unset($data['delete_ine'], $data['delete_ine_2']);
         $asesor->update($data);
         return response()->json([
-            'message' => 'Asesor actualizado exitosamente',
+            'message' => 'Empleado actualizado exitosamente',
             'data' => $asesor->fresh(['user', 'creditos'])
         ]);
     }
@@ -278,7 +277,7 @@ class AsesorController extends Controller
         $asesor = Asesor::findOrFail($id);
         $asesor->delete();
         return response()->json([
-            'message' => 'Asesor eliminado exitosamente'
+            'message' => 'Empleado eliminado exitosamente'
         ]);
     }
 }

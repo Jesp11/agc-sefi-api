@@ -107,7 +107,7 @@ class ClienteController extends Controller
             if (! $data['id_asesor']) {
                 $errors[] = [
                     'fila' => $rowNumber,
-                    'mensajes' => ['No se encontró el asesor indicado.'],
+                    'mensajes' => ['No se encontró el empleado/asesor indicado.'],
                 ];
                 continue;
             }
@@ -171,7 +171,7 @@ class ClienteController extends Controller
         if (array_key_exists('id_asesor', $data)) {
             $esAdmin = RoleHelper::isAdminLike($request->user()?->role?->nombre);
             if (!$esAdmin) {
-                return response()->json(['message' => 'Solo un administrador puede cambiar el asesor.'], 403);
+                return response()->json(['message' => 'Solo un administrador puede cambiar el empleado/asesor asignado.'], 403);
             }
         }
 
@@ -190,7 +190,7 @@ class ClienteController extends Controller
 
         return response()->json([
             'message' => $creditosActualizados > 0
-                ? "Cliente actualizado. {$creditosActualizados} crédito(s) activo(s) reasignado(s) al nuevo asesor."
+                ? "Cliente actualizado. {$creditosActualizados} crédito(s) activo(s) reasignado(s) al nuevo empleado/gestor."
                 : 'Cliente actualizado exitosamente',
             'data' => $cliente->load(['grupos', 'asesor', 'creditos.asesor']),
             'creditos_reasignados' => $creditosActualizados,

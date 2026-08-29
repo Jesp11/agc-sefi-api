@@ -33,9 +33,9 @@ class StoreClienteRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'id_asesor.required_without' => 'Selecciona un asesor antes de guardar el cliente.',
-            'id_asesor.integer'          => 'El asesor seleccionado no es válido.',
-            'id_asesor.exists'           => 'El asesor seleccionado no existe.',
+            'id_asesor.required_without' => 'Selecciona un asesor o gestor antes de guardar el cliente.',
+            'id_asesor.integer'          => 'El empleado/asesor seleccionado no es válido.',
+            'id_asesor.exists'           => 'El empleado/asesor seleccionado no existe.',
         ];
     }
 }
