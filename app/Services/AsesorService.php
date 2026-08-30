@@ -120,8 +120,39 @@ class AsesorService
         return ['asesor' => $savedAsesor->fresh(['user']), 'action' => $action];
     }
 
+    public function resolveRoleForLaboral(?string $rolLaboral): Role
+    {
+        if (!empty($rolLaboral)) {
+            $exact = Role::where('nombre', $rolLaboral)->first();
+            if ($exact) {
+                return $exact;
+            }
+
+            $normalized = mb_strtoupper(trim($rolLaboral), 'UTF-8');
+            $candidateName = match (true) {
+                str_contains($normalized, 'ADMIN') => 'Administrador',
+                str_contains($normalized, 'GEREN') => 'Gerencia',
+                str_contains($normalized, 'CONTAB') => 'Contabilidad',
+                str_contains($normalized, 'FINANCIERO') => 'Asesor Financiero',
+                str_contains($normalized, 'GESTOR') || str_contains($normalized, 'COBRANZA') => 'Gestor de Cobranza',
+                default => null,
+            };
+
+            if ($candidateName) {
+                $role = Role::where('nombre', $candidateName)->first();
+                if ($role) {
+                    return $role;
+                }
+            }
+        }
+
+        return Role::where('nombre', 'Gestor de Cobranza')->first()
+            ?? Role::where('nombre', 'asesor')->first()
+            ?? Role::firstOrFail();
+    }
+
     /**
-     * Crea usuario de acceso para un asesor (rol asesor) con contraseña temporal.
+     * Crea usuario de acceso para un asesor con el rol correspondiente a su puesto laboral y contraseña temporal.
      *
      * @return array{user: User, password: string, created: bool}
      */
@@ -136,13 +167,7 @@ class AsesorService
             throw new InvalidArgumentException('El correo ya está registrado en otro usuario.');
         }
 
-        $role = Role::whereIn('nombre', ['Gestor de Cobranza', 'asesor'])
-            ->orderByRaw("CASE WHEN nombre = 'Gestor de Cobranza' THEN 0 ELSE 1 END")
-            ->first();
-        if (!$role) {
-            throw new InvalidArgumentException('No existe el rol operativo de cobranza en el sistema.');
-        }
-
+        $role = $this->resolveRoleForLaboral($asesor->rol_laboral);
         $plainPassword = $password ?: $this->generarPasswordTemporal();
 
         $user = User::create([

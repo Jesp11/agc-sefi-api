@@ -242,10 +242,8 @@ class AsesorController extends Controller
         }
 
         if (isset($data['rol_laboral']) && $asesor->user) {
-            $matchingRole = \App\Models\Role::where('nombre', $data['rol_laboral'])->first();
-            if ($matchingRole) {
-                $asesor->user->update(['role_id' => $matchingRole->id]);
-            }
+            $matchingRole = $this->asesorService->resolveRoleForLaboral($data['rol_laboral']);
+            $asesor->user->update(['role_id' => $matchingRole->id]);
         }
 
         if ($request->boolean('delete_ine')) {

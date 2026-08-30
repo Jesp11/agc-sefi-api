@@ -10,12 +10,26 @@ final class RoleHelper
 
     public static function isAdminLike(?string $roleName): bool
     {
-        return in_array($roleName, self::ADMIN_EQUIVALENTS, true);
+        if ($roleName === null || $roleName === '') {
+            return false;
+        }
+
+        $normalized = mb_strtolower(trim($roleName), 'UTF-8');
+        $adminEquivalents = array_map(fn ($r) => mb_strtolower($r, 'UTF-8'), self::ADMIN_EQUIVALENTS);
+
+        return in_array($normalized, $adminEquivalents, true);
     }
 
     public static function isFieldLike(?string $roleName): bool
     {
-        return in_array($roleName, self::FIELD_EQUIVALENTS, true);
+        if ($roleName === null || $roleName === '') {
+            return false;
+        }
+
+        $normalized = mb_strtolower(trim($roleName), 'UTF-8');
+        $fieldEquivalents = array_map(fn ($r) => mb_strtolower($r, 'UTF-8'), self::FIELD_EQUIVALENTS);
+
+        return in_array($normalized, $fieldEquivalents, true);
     }
 
     public static function expands(array $roles): array
@@ -23,12 +37,12 @@ final class RoleHelper
         $expanded = [];
 
         foreach ($roles as $role) {
-            if ($role === 'admin') {
+            if (self::isAdminLike($role)) {
                 array_push($expanded, ...self::ADMIN_EQUIVALENTS);
                 continue;
             }
 
-            if ($role === 'asesor') {
+            if (self::isFieldLike($role)) {
                 array_push($expanded, ...self::FIELD_EQUIVALENTS);
                 continue;
             }
