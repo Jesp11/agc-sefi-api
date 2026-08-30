@@ -23,7 +23,8 @@ class CarteraService
     public function __construct(
         private MoraCalculationService $moraService,
         private CicloService $cicloService,
-        private ClienteService $clienteService
+        private ClienteService $clienteService,
+        private IndicadoresOperativosService $indicadoresOperativosService
     ) {}
 
     /**
@@ -180,15 +181,38 @@ class CarteraService
             throw new InvalidArgumentException('Solo se pueden enviar a mora créditos activos.');
         }
 
+        if ($credito->estado === 'EnMora') {
+            return $credito->fresh(['cliente', 'grupo', 'asesor']);
+        }
+
         $mora = $this->moraService->calculate($credito);
         $diasMora = max((int) $mora['dias_mora'], 1);
         $cicloInicio = $mora['ciclo_inicio_mora'] ?? $credito->ciclo_inicio_mora ?? 1;
+        $saldoActual = round((float) ($mora['saldo_actual'] ?? $credito->saldo_pendiente ?? 0), 2);
 
         $credito->update([
             'estado' => 'EnMora',
             'dias_mora_cache' => $diasMora,
             'ciclo_inicio_mora' => $cicloInicio,
         ]);
+
+        $beneficiario = $credito->cliente?->nombre_completo
+            ?? $credito->grupo?->nombre_grupo
+            ?? "Crédito #{$credito->num_prog}";
+
+        $this->indicadoresOperativosService->registrarPaseMora(
+            now()->toDateString(),
+            $saldoActual,
+            $credito,
+            'cartera.enviar_mora',
+            "Pase a mora de {$beneficiario}",
+            [
+                'dias_mora' => $diasMora,
+                'ciclo_inicio_mora' => $cicloInicio,
+                'saldo_pendiente' => round((float) ($credito->saldo_pendiente ?? 0), 2),
+                'saldo_actual_calculado' => $saldoActual,
+            ]
+        );
 
         return $credito->fresh(['cliente', 'grupo', 'asesor']);
     }

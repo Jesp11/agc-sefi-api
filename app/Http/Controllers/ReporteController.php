@@ -97,6 +97,55 @@ class ReporteController extends Controller
         ));
     }
 
+    public function guardarCierreMensualManual(Request $request)
+    {
+        $data = $request->validate([
+            'mes' => 'required|date_format:Y-m',
+            'aumento_cartera' => 'nullable|numeric',
+            'cancelacion_credito_vehicular' => 'nullable|numeric',
+            'pase_a_cartera_mora' => 'nullable|numeric',
+            'productividad_mensual' => 'nullable|numeric',
+        ]);
+
+        $registro = $this->reportService->guardarCierreMensualManual($data['mes'], $data);
+
+        return response()->json([
+            'message' => 'Indicadores operativos guardados',
+            'data' => $registro,
+        ]);
+    }
+
+    public function accionistasConfigurados()
+    {
+        return response()->json([
+            'data' => $this->reportService->accionistasConfigurados(),
+        ]);
+    }
+
+    public function guardarAccionistasConfigurados(Request $request)
+    {
+        $data = $request->validate([
+            'accionistas' => 'required|array|min:1',
+            'accionistas.*.nombre' => 'required|string|max:255',
+            'accionistas.*.porcentaje' => 'required|numeric|min:0.01|max:100',
+        ]);
+
+        $total = round((float) collect($data['accionistas'])->sum(fn ($row) => (float) ($row['porcentaje'] ?? 0)), 2);
+        if (abs($total - 100) > 0.01) {
+            return response()->json([
+                'message' => 'La suma de participaciones debe ser 100%.',
+                'total' => $total,
+            ], 422);
+        }
+
+        $rows = $this->reportService->guardarAccionistasConfigurados($data['accionistas']);
+
+        return response()->json([
+            'message' => 'Participaciones de accionistas guardadas',
+            'data' => $rows,
+        ]);
+    }
+
     public function estadoFinancieroInversionistas(Request $request)
     {
         return response()->json($this->reportService->estadoFinancieroInversionistas(

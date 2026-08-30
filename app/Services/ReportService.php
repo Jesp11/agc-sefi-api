@@ -7,6 +7,8 @@ use App\Models\AhorroPersonal;
 use App\Models\AhorroSocio;
 use App\Models\Aportacion;
 use App\Models\Asesor;
+use App\Models\CierreMensualManual;
+use App\Models\ConfiguracionSistema;
 use App\Models\Credito;
 use App\Models\GastoOperativo;
 use App\Models\Inversionista;
@@ -15,13 +17,24 @@ use App\Models\Pago;
 use App\Models\RecepcionAsesor;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
+use SimpleXMLElement;
+use ZipArchive;
 
 class ReportService
 {
+    private const ACCIONISTAS_DEFAULT = [
+        ['nombre' => 'JOSSUE GIBRAN S. DIAZ', 'porcentaje' => 0.43],
+        ['nombre' => 'FREDY PONCE SANCHEZ', 'porcentaje' => 0.37],
+        ['nombre' => 'JULIO CESAR RMZ. RAMOS', 'porcentaje' => 0.10],
+        ['nombre' => 'GIBRAN URIEL SOBREVILLA', 'porcentaje' => 0.10],
+    ];
+
     public function __construct(
         private MoraCalculationService $moraService,
         private FlujoCajaService $flujoCajaService,
+        private IndicadoresOperativosService $indicadoresOperativosService,
     ) {}
 
     public function reporteDiario(?string $fecha = null, ?int $idAsesor = null): array
@@ -177,11 +190,18 @@ class ReportService
         } elseif ($tipo === 'mora_activa') {
             $query->where('estado', 'EnMora');
         } elseif ($tipo === 'mora_muerta') {
-            $query->whereIn('estado', ['CerradoSinRenovacion', 'Finalizado'])
-                ->where(function ($q) {
-                    $q->whereNotNull('ciclo_inicio_mora')
-                        ->orWhere('dias_mora_cache', '>', 0);
+            $query->where(function ($q) {
+                $q->where(function ($closed) {
+                    $closed->whereIn('estado', ['CerradoSinRenovacion', 'Finalizado'])
+                        ->where(function ($history) {
+                            $history->whereNotNull('ciclo_inicio_mora')
+                                ->orWhere('dias_mora_cache', '>', 0);
+                        });
+                })->orWhere(function ($imported) {
+                    $imported->where('estado', 'EnMora')
+                        ->where('tabla_amortizacion', 'like', '%"mora_clasificacion": "mora_muerta"%');
                 });
+            });
         } elseif ($tipo === 'cerrados') {
             $query->whereIn('estado', ['CerradoSinRenovacion', 'Finalizado']);
         } elseif ($tipo === 'general') {
@@ -240,13 +260,24 @@ class ReportService
         $query = Credito::with(['cliente', 'grupo', 'asesor', 'pagos']);
 
         if ($tipo === 'mora-activa') {
-            $query->where('estado', 'EnMora');
-        } else {
-            $query->whereIn('estado', ['CerradoSinRenovacion', 'Finalizado'])
+            $query->where('estado', 'EnMora')
                 ->where(function ($q) {
-                    $q->whereNotNull('ciclo_inicio_mora')
-                        ->orWhere('dias_mora_cache', '>', 0);
+                    $q->whereNull('tabla_amortizacion')
+                        ->orWhere('tabla_amortizacion', 'not like', '%"mora_clasificacion": "mora_muerta"%');
                 });
+        } else {
+            $query->where(function ($q) {
+                $q->where(function ($closed) {
+                    $closed->whereIn('estado', ['CerradoSinRenovacion', 'Finalizado'])
+                        ->where(function ($history) {
+                            $history->whereNotNull('ciclo_inicio_mora')
+                                ->orWhere('dias_mora_cache', '>', 0);
+                        });
+                })->orWhere(function ($imported) {
+                    $imported->where('estado', 'EnMora')
+                        ->where('tabla_amortizacion', 'like', '%"mora_clasificacion": "mora_muerta"%');
+                });
+            });
         }
 
         if ($idAsesor) {
@@ -362,17 +393,20 @@ class ReportService
         $base = $fechaMes ? Carbon::parse($fechaMes)->startOfMonth() : now()->startOfMonth();
         $inicio = $base->copy()->startOfMonth();
         $fin = $base->copy()->endOfMonth();
+        $corte = $this->resolveCorteMensual($inicio, $fin);
         $resumenCaja = $this->flujoCajaService->resumen((int) $inicio->month, (int) $inicio->year);
 
         $carteraIndividual = $this->buildCarteraResumen('Individual');
         $carteraGrupal = $this->buildCarteraResumen('Grupal');
         $adeudos = $this->buildAdeudosResumen();
         $fuentes = $this->buildFuentesFondeoResumen($inicio, $fin);
+        $visual = $this->buildCierreMensualVisual($inicio, $corte);
 
         return [
             'mes' => $inicio->format('Y-m'),
             'inicio' => $inicio->toDateString(),
             'fin' => $fin->toDateString(),
+            'corte' => $corte->toDateString(),
             'flujo' => $resumenCaja,
             'cartera' => [
                 'individual' => $carteraIndividual,
@@ -386,7 +420,24 @@ class ReportService
                 ),
             ],
             'fondeo' => $fuentes,
+            'visual' => $visual,
         ];
+    }
+
+    public function guardarCierreMensualManual(string $mes, array $data): CierreMensualManual
+    {
+        Carbon::createFromFormat('Y-m', $mes);
+
+        return CierreMensualManual::query()->updateOrCreate(
+            ['mes' => $mes],
+            [
+                'aumento_cartera' => $data['aumento_cartera'] ?? null,
+                'cancelacion_credito_vehicular' => $data['cancelacion_credito_vehicular'] ?? null,
+                'pase_a_cartera_mora' => $data['pase_a_cartera_mora'] ?? null,
+                'productividad_mensual' => $data['productividad_mensual'] ?? null,
+                'registrado_por' => Auth::id(),
+            ]
+        );
     }
 
     public function estadoFinancieroInversionistas(?string $fechaInicio = null, ?string $fechaFin = null): array
@@ -724,6 +775,929 @@ class ReportService
         }
 
         return $series;
+    }
+
+    private function resolveCorteMensual(Carbon $inicio, Carbon $fin): Carbon
+    {
+        $fechas = collect([
+            Credito::query()
+                ->whereDate('fecha_otorgacion', '>=', $inicio->toDateString())
+                ->whereDate('fecha_otorgacion', '<=', $fin->toDateString())
+                ->max('fecha_otorgacion'),
+            Pago::query()
+                ->whereDate('fecha', '>=', $inicio->toDateString())
+                ->whereDate('fecha', '<=', $fin->toDateString())
+                ->max('fecha'),
+            MovimientoCaja::query()
+                ->whereDate('fecha', '>=', $inicio->toDateString())
+                ->whereDate('fecha', '<=', $fin->toDateString())
+                ->max('fecha'),
+            Aportacion::query()
+                ->whereDate('fecha', '>=', $inicio->toDateString())
+                ->whereDate('fecha', '<=', $fin->toDateString())
+                ->max('fecha'),
+        ])
+            ->filter()
+            ->map(fn ($fecha) => Carbon::parse($fecha)->startOfDay())
+            ->sort()
+            ->values();
+
+        if ($fechas->isNotEmpty()) {
+            return $fechas->last();
+        }
+
+        return $fin->copy()->startOfDay();
+    }
+
+    private function buildCierreMensualVisual(Carbon $inicio, Carbon $corte): array
+    {
+        $manual = $this->buildCierreMensualManual($inicio);
+        $carteraIndividualActiva = $this->buildPortfolioSnapshot('Individual', 'Activo', $corte);
+        $carteraGrupalActiva = $this->buildPortfolioSnapshot('Grupal', 'Activo', $corte);
+        $capitalPasivo = $this->buildCapitalPasivo($corte);
+        $valorBruto = round(
+            (float) $carteraIndividualActiva['saldo_total']
+            + (float) $carteraGrupalActiva['saldo_total']
+            + (float) $capitalPasivo,
+            2
+        );
+
+        $inversionistas = $this->buildInversionistasAgrupados($corte);
+        $adeudoInversionistas = round((float) collect($inversionistas)->sum('saldo_capital'), 2);
+        $adeudoMercadoPago = $this->buildMercadoPagoAdeudo($corte);
+        $adeudosTotal = round($adeudoInversionistas + $adeudoMercadoPago, 2);
+        $valorNeto = round($valorBruto - $adeudosTotal, 2);
+
+        $accionistas = collect($this->accionistasConfigurados())->map(function (array $row) use ($valorBruto, $valorNeto, $adeudosTotal) {
+            $porcentaje = (float) $row['porcentaje'];
+            return [
+                'nombre' => $row['nombre'],
+                'porcentaje' => round($porcentaje * 100, 2),
+                'valor_bruto' => round($valorBruto * $porcentaje, 2),
+                'valor_neto' => round($valorNeto * $porcentaje, 2),
+                'adeudo_asignado' => round($adeudosTotal * $porcentaje, 2),
+            ];
+        })->values()->all();
+
+        $liquidaciones = $this->buildLiquidaciones($inicio, $corte);
+        $indicadoresAutomaticos = $this->indicadoresOperativosService->resumenMensual($inicio, $corte);
+        $mora = $this->buildMoraSnapshot($corte);
+        $aumentoCartera = ((float) ($indicadoresAutomaticos['aumento_cartera'] ?? 0)) > 0
+            ? $indicadoresAutomaticos['aumento_cartera']
+            : $manual['aumento_cartera'];
+        $cancelacionVehicular = ((float) ($indicadoresAutomaticos['cancelacion_credito_vehicular'] ?? 0)) > 0
+            ? $indicadoresAutomaticos['cancelacion_credito_vehicular']
+            : $manual['cancelacion_credito_vehicular'];
+        $paseMora = ((float) ($indicadoresAutomaticos['pase_a_cartera_mora'] ?? 0)) > 0
+            ? $indicadoresAutomaticos['pase_a_cartera_mora']
+            : $manual['pase_a_cartera_mora'];
+        $productividadMensual = $aumentoCartera !== null
+            ? round((float) $aumentoCartera + (float) $liquidaciones['monto'], 2)
+            : $manual['productividad_mensual'];
+
+        return [
+            'titulo' => sprintf(
+                'INFORME CIERRE MES DEL MES DE %s Y PROYECCIONES DE %s DE %s',
+                mb_strtoupper($inicio->locale('es')->isoFormat('MMMM')),
+                mb_strtoupper($inicio->copy()->addMonth()->locale('es')->isoFormat('MMMM')),
+                $inicio->year
+            ),
+            'valores_acciones' => [
+                'cartera_individual' => $carteraIndividualActiva['saldo_total'],
+                'cartera_grupal' => $carteraGrupalActiva['saldo_total'],
+                'capital_pasivo' => $capitalPasivo,
+                'valor_bruto_cartera' => $valorBruto,
+                'valor_neto_cartera' => $valorNeto,
+            ],
+            'adeudos_cartera' => [
+                'inversionistas' => $adeudoInversionistas,
+                'mercado_pago' => $adeudoMercadoPago,
+                'total' => $adeudosTotal,
+            ],
+            'operacion' => [
+                'aumento_cartera' => $aumentoCartera,
+                'cancelacion_credito_vehicular' => $cancelacionVehicular,
+                'pase_a_cartera_mora' => $paseMora,
+                'liquidaciones' => $liquidaciones['monto'],
+                'productividad_mensual' => $productividadMensual,
+                'notas' => [
+                    'Liquidaciones en el cierre mensual representa el adeudo/liquidacion de Mercado Pago.',
+                    'Productividad mensual se calcula como aumento de cartera + liquidaciones.',
+                    'Aumento de cartera, cancelacion credito vehicular y pase a cartera de mora usan eventos operativos cuando existan; si no, se conserva la captura manual.',
+                ],
+                'detalle_eventos' => $indicadoresAutomaticos['eventos'],
+            ],
+            'captura_manual' => $manual,
+            'accionistas' => [
+                'porcentajes' => collect($accionistas)->map(fn (array $row) => [
+                    'nombre' => $row['nombre'],
+                    'porcentaje' => $row['porcentaje'],
+                ])->all(),
+                'valores' => $accionistas,
+            ],
+            'inversionistas' => [
+                'registros' => $inversionistas,
+                'total' => $adeudoInversionistas,
+            ],
+            'adeudos_por_accionista' => collect($accionistas)->map(fn (array $row) => [
+                'nombre' => $row['nombre'],
+                'monto' => $row['adeudo_asignado'],
+            ])->all(),
+            'cartera_individual' => [
+                'clientes_activos' => $carteraIndividualActiva['creditos'],
+            ],
+            'cartera_grupal' => [
+                'grupos_activos' => $carteraGrupalActiva['creditos'],
+                'clientes_activos' => $this->countGrupalMembersAt($corte),
+            ],
+            'total_clientes' => (int) $carteraIndividualActiva['creditos'] + (int) $this->countGrupalMembersAt($corte),
+            'distribucion_carteras' => $this->buildDistribucionCarteras($corte),
+            'cierre_mora' => $mora,
+            'liquidaciones_detalle' => $liquidaciones,
+        ];
+    }
+
+    public function accionistasConfigurados(): array
+    {
+        $row = ConfiguracionSistema::query()
+            ->where('clave', 'accionistas_participacion')
+            ->first();
+
+        if (!$row) {
+            return self::ACCIONISTAS_DEFAULT;
+        }
+
+        $decoded = json_decode((string) $row->valor, true);
+        if (!is_array($decoded)) {
+            return self::ACCIONISTAS_DEFAULT;
+        }
+
+        $rows = collect($decoded)
+            ->map(function ($item) {
+                if (!is_array($item)) {
+                    return null;
+                }
+
+                $nombre = trim((string) ($item['nombre'] ?? ''));
+                $porcentaje = round((float) ($item['porcentaje'] ?? 0), 4);
+
+                if ($nombre === '' || $porcentaje <= 0) {
+                    return null;
+                }
+
+                return [
+                    'nombre' => $nombre,
+                    'porcentaje' => $porcentaje,
+                ];
+            })
+            ->filter()
+            ->values();
+
+        if ($rows->isEmpty()) {
+            return self::ACCIONISTAS_DEFAULT;
+        }
+
+        return $rows->all();
+    }
+
+    public function guardarAccionistasConfigurados(array $rows): array
+    {
+        $normalized = collect($rows)
+            ->map(function (array $row) {
+                return [
+                    'nombre' => trim((string) ($row['nombre'] ?? '')),
+                    'porcentaje' => round(((float) ($row['porcentaje'] ?? 0)) / 100, 4),
+                ];
+            })
+            ->filter(fn (array $row) => $row['nombre'] !== '' && $row['porcentaje'] > 0)
+            ->values();
+
+        ConfiguracionSistema::query()->updateOrCreate(
+            ['clave' => 'accionistas_participacion'],
+            ['valor' => json_encode($normalized->all(), JSON_UNESCAPED_UNICODE)]
+        );
+
+        return $this->accionistasConfigurados();
+    }
+
+    private function buildPortfolioSnapshot(string $tipoCredito, string $estado, Carbon $corte): array
+    {
+        $rows = Credito::query()
+            ->where('tipo_credito', $tipoCredito)
+            ->where('estado', $estado)
+            ->whereDate('fecha_otorgacion', '<=', $corte->toDateString())
+            ->get();
+
+        return [
+            'creditos' => $rows->count(),
+            'saldo_total' => round((float) $rows->sum('saldo_pendiente'), 2),
+            'monto_otorgado' => round((float) $rows->sum('monto_otorgado'), 2),
+        ];
+    }
+
+    private function cashBalanceAt(Carbon $corte): float
+    {
+        $saldo = MovimientoCaja::query()
+            ->whereDate('fecha', '<=', $corte->toDateString())
+            ->orderByDesc('fecha')
+            ->orderByDesc('id')
+            ->value('saldo_resultante');
+
+        return round((float) ($saldo ?? 0), 2);
+    }
+
+    private function buildCapitalPasivo(Carbon $corte): float
+    {
+        $workbookValue = $this->readFlujoWorkbookValueByLabel(
+            $corte,
+            'CAPITAL PASIVO'
+        );
+
+        if ($workbookValue !== null) {
+            return $workbookValue;
+        }
+
+        return $this->cashBalanceAt($corte);
+    }
+
+    private function buildCierreMensualManual(Carbon $inicio): array
+    {
+        $row = CierreMensualManual::query()
+            ->where('mes', $inicio->format('Y-m'))
+            ->first();
+
+        return [
+            'mes' => $inicio->format('Y-m'),
+            'aumento_cartera' => $this->nullableDecimal($row?->aumento_cartera),
+            'cancelacion_credito_vehicular' => $this->nullableDecimal($row?->cancelacion_credito_vehicular),
+            'pase_a_cartera_mora' => $this->nullableDecimal($row?->pase_a_cartera_mora),
+            'productividad_mensual' => $this->nullableDecimal($row?->productividad_mensual),
+            'actualizado_en' => $row?->updated_at?->toDateTimeString(),
+        ];
+    }
+
+    private function buildMercadoPagoAdeudo(Carbon $corte): float
+    {
+        $workbookValue = $this->readMercadoPagoAdeudoFromWorkbook($corte);
+        if ($workbookValue !== null) {
+            return $workbookValue;
+        }
+
+        $rows = MovimientoCaja::query()
+            ->whereDate('fecha', '<=', $corte->toDateString())
+            ->where(function ($q) {
+                $q->where('cuenta', 'like', '%Mercado Pago%')
+                    ->orWhere('motivo', 'like', '%Mercado Pago%')
+                    ->orWhere('referencia', 'like', '%Mercado Pago%');
+            })
+            ->get();
+
+        return round((float) $rows->sum(function (MovimientoCaja $row) {
+            return $row->tipo === 'Ingreso' ? $row->monto : -1 * (float) $row->monto;
+        }), 2);
+    }
+
+    private function readMercadoPagoAdeudoFromWorkbook(Carbon $corte): ?float
+    {
+        return $this->readFlujoWorkbookValueByLabel($corte, 'MERCADO PAGO');
+    }
+
+    private function resolveFlujoWorkbookPath(Carbon $corte): ?string
+    {
+        $root = dirname(base_path());
+        $year = $corte->year;
+        $candidates = [
+            "{$root}/scripts/Actualizados/INGRESOS Y EGRESOS GENERALES {$year}.xlsx",
+            "{$root}/scripts/Actualizados/INGRESOS Y EGRESOS GENERALES {$year} ACTUALIZADO.xlsx",
+            "{$root}/scripts/import-flujo-caja/INGRESOS Y EGRESOS GENERALES {$year} ACTUALIZADO.xlsx",
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (is_file($candidate)) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private function readFlujoWorkbookValueByLabel(Carbon $corte, string $label): ?float
+    {
+        $path = $this->resolveFlujoWorkbookPath($corte);
+        if ($path === null) {
+            return null;
+        }
+
+        try {
+            $cells = $this->readWorkbookSheetCells(
+                $path,
+                mb_strtoupper($corte->locale('es')->isoFormat('MMMM'))
+            );
+        } catch (\Throwable $e) {
+            Log::warning('No se pudo leer valor desde workbook mensual.', [
+                'path' => $path,
+                'mes' => $corte->format('Y-m'),
+                'label' => $label,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+
+        if ($cells === []) {
+            return null;
+        }
+
+        $label = mb_strtoupper(trim($label));
+        foreach ($cells as $ref => $value) {
+            if (mb_strtoupper(trim((string) $value)) !== $label) {
+                continue;
+            }
+
+            $nextRef = $this->incrementExcelColumn($ref);
+            if ($nextRef === null || !array_key_exists($nextRef, $cells)) {
+                continue;
+            }
+
+            $numeric = $this->normalizeExcelNumber($cells[$nextRef]);
+            if ($numeric !== null) {
+                return $numeric;
+            }
+        }
+
+        return null;
+    }
+
+    private function readWorkbookSheetCells(string $path, string $sheetName): array
+    {
+        $zip = new ZipArchive();
+        if ($zip->open($path) !== true) {
+            return [];
+        }
+
+        try {
+            $sharedStrings = $this->readWorkbookSharedStrings($zip);
+            $sheetPath = $this->resolveWorkbookSheetPath($zip, $sheetName);
+            if ($sheetPath === null) {
+                return [];
+            }
+
+            $xml = $zip->getFromName($sheetPath);
+            if ($xml === false) {
+                return [];
+            }
+
+            $sheet = new SimpleXMLElement($xml);
+            $sheet->registerXPathNamespace('a', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main');
+
+            $cells = [];
+            foreach ($sheet->xpath('//a:sheetData/a:row/a:c') ?: [] as $cell) {
+                $ref = (string) ($cell['r'] ?? '');
+                if ($ref === '') {
+                    continue;
+                }
+
+                $type = (string) ($cell['t'] ?? '');
+                if ($type === 'inlineStr') {
+                    $value = trim((string) ($cell->is->t ?? ''));
+                } else {
+                    $value = (string) ($cell->v ?? '');
+                    if ($type === 's' && $value !== '' && isset($sharedStrings[(int) $value])) {
+                        $value = $sharedStrings[(int) $value];
+                    }
+                }
+
+                $cells[$ref] = $value;
+            }
+
+            return $cells;
+        } finally {
+            $zip->close();
+        }
+    }
+
+    private function readWorkbookSharedStrings(ZipArchive $zip): array
+    {
+        $xml = $zip->getFromName('xl/sharedStrings.xml');
+        if ($xml === false) {
+            return [];
+        }
+
+        $shared = new SimpleXMLElement($xml);
+        $shared->registerXPathNamespace('a', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main');
+
+        $values = [];
+        foreach ($shared->xpath('//a:si') ?: [] as $item) {
+            $item->registerXPathNamespace('a', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main');
+            $parts = [];
+            foreach ($item->xpath('.//a:t') ?: [] as $text) {
+                $parts[] = (string) $text;
+            }
+            $values[] = implode('', $parts);
+        }
+
+        return $values;
+    }
+
+    private function resolveWorkbookSheetPath(ZipArchive $zip, string $sheetName): ?string
+    {
+        $workbookXml = $zip->getFromName('xl/workbook.xml');
+        $relsXml = $zip->getFromName('xl/_rels/workbook.xml.rels');
+        if ($workbookXml === false || $relsXml === false) {
+            return null;
+        }
+
+        $workbook = new SimpleXMLElement($workbookXml);
+        $workbook->registerXPathNamespace('a', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main');
+        $workbook->registerXPathNamespace('r', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships');
+
+        $relId = null;
+        foreach ($workbook->xpath('//a:sheets/a:sheet') ?: [] as $sheet) {
+            if (mb_strtoupper(trim((string) ($sheet['name'] ?? ''))) === mb_strtoupper(trim($sheetName))) {
+                $attributes = $sheet->attributes('http://schemas.openxmlformats.org/officeDocument/2006/relationships');
+                $relId = (string) ($attributes['id'] ?? '');
+                break;
+            }
+        }
+
+        if ($relId === null || $relId === '') {
+            return null;
+        }
+
+        $rels = new SimpleXMLElement($relsXml);
+        $rels->registerXPathNamespace('pr', 'http://schemas.openxmlformats.org/package/2006/relationships');
+        foreach ($rels->xpath('//pr:Relationship') ?: [] as $relationship) {
+            if ((string) ($relationship['Id'] ?? '') === $relId) {
+                return 'xl/' . ltrim((string) ($relationship['Target'] ?? ''), '/');
+            }
+        }
+
+        return null;
+    }
+
+    private function incrementExcelColumn(string $cellRef): ?string
+    {
+        if (!preg_match('/^([A-Z]+)(\d+)$/', $cellRef, $matches)) {
+            return null;
+        }
+
+        $column = $matches[1];
+        $row = $matches[2];
+        $length = strlen($column);
+        $carry = 1;
+
+        for ($i = $length - 1; $i >= 0; $i--) {
+            $code = ord($column[$i]) - 64 + $carry;
+            if ($code > 26) {
+                $column[$i] = 'A';
+                $carry = 1;
+            } else {
+                $column[$i] = chr($code + 64);
+                $carry = 0;
+                break;
+            }
+        }
+
+        if ($carry === 1) {
+            $column = 'A' . $column;
+        }
+
+        return $column . $row;
+    }
+
+    private function normalizeExcelNumber(mixed $value): ?float
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (is_numeric($value)) {
+            return round((float) $value, 2);
+        }
+
+        $normalized = str_replace([',', '$', ' '], '', (string) $value);
+        return is_numeric($normalized) ? round((float) $normalized, 2) : null;
+    }
+
+    private function nullableDecimal(mixed $value): ?float
+    {
+        return $value === null ? null : round((float) $value, 2);
+    }
+
+    private function buildInversionistasAgrupados(Carbon $corte): array
+    {
+        return Inversionista::with(['aportaciones' => fn ($q) => $q->orderBy('fecha')->orderBy('id')])
+            ->where('activo', true)
+            ->orderBy('nombre')
+            ->get()
+            ->groupBy(function (Inversionista $inv) {
+                return preg_replace('/\s+\d+$/', '', trim((string) $inv->nombre)) ?: $inv->nombre;
+            })
+            ->map(function ($group, $baseName) use ($corte) {
+                $saldo = $group->sum(function (Inversionista $inv) use ($corte) {
+                    return $inv->aportaciones
+                        ->filter(fn ($item) => $item->fecha && $item->fecha->lte($corte))
+                        ->sum(function (Aportacion $item) {
+                            return $item->tipo === 'Retiro' ? -1 * (float) $item->monto : (float) $item->monto;
+                        });
+                });
+
+                return [
+                    'nombre' => $this->formatInvestorLabel((string) $baseName),
+                    'saldo_capital' => round((float) $saldo, 2),
+                ];
+            })
+            ->filter(fn (array $row) => abs((float) $row['saldo_capital']) > 0.009)
+            ->values()
+            ->all();
+    }
+
+    private function formatInvestorLabel(string $name): string
+    {
+        return match (mb_strtoupper(trim($name))) {
+            'MARIA GUADALUPE DIAZ RODRIGUEZ' => 'MARIA GPE. DIAZ RDGZ.',
+            'JUANA SANCHEZ MORALES' => 'JUANA SANCHEZ MORALES',
+            'ISIDORA HERNANDEZ GARCIA' => 'ISIDORA HDZ. GARCIA',
+            'JOSSUE GIBRAN SOBREVILLA DIAZ' => 'JOSSUE GIBRAN S. DIAZ',
+            default => $name,
+        };
+    }
+
+    private function buildLiquidaciones(Carbon $inicio, Carbon $corte): array
+    {
+        $montoMercadoPago = $this->readLiquidacionMercadoPagoFromWorkbook($corte);
+        if ($montoMercadoPago === null) {
+            $montoMercadoPago = $this->readFlujoWorkbookValueByLabel($corte, 'MERCADO PAGO');
+        }
+
+        $rows = MovimientoCaja::query()
+            ->whereBetween('fecha', [$inicio->toDateString(), $corte->toDateString()])
+            ->where(function ($q) {
+                $q->where('motivo', 'like', '%LIQUIDACION%')
+                    ->orWhere('motivo', 'like', '%LIQUIDADO%');
+            })
+            ->orderBy('fecha')
+            ->orderBy('id')
+            ->get()
+            ->map(fn (MovimientoCaja $row) => [
+                'fecha' => $row->fecha?->toDateString(),
+                'tipo' => $row->tipo,
+                'motivo' => $row->motivo,
+                'monto' => round((float) $row->monto, 2),
+            ])
+            ->values();
+
+        return [
+            'monto' => round((float) ($montoMercadoPago ?? 0), 2),
+            'criterio' => 'mercado_pago',
+            'movimientos' => $rows->all(),
+        ];
+    }
+
+    private function readLiquidacionMercadoPagoFromWorkbook(Carbon $corte): ?float
+    {
+        $path = $this->resolveFlujoWorkbookPath($corte);
+        if ($path === null) {
+            return null;
+        }
+
+        try {
+            $cells = $this->readWorkbookSheetCells(
+                $path,
+                mb_strtoupper($corte->locale('es')->isoFormat('MMMM'))
+            );
+        } catch (\Throwable $e) {
+            Log::warning('No se pudo leer liquidacion de Mercado Pago desde workbook mensual.', [
+                'path' => $path,
+                'mes' => $corte->format('Y-m'),
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+
+        $matches = [];
+        foreach ($cells as $ref => $value) {
+            if (!preg_match('/^([A-Z]+)(\d+)$/', $ref, $parts)) {
+                continue;
+            }
+
+            if (mb_strtoupper(trim((string) $value)) !== 'MERCADO PAGO') {
+                continue;
+            }
+
+            $nextRef = $this->incrementExcelColumn($ref);
+            if ($nextRef === null || !array_key_exists($nextRef, $cells)) {
+                continue;
+            }
+
+            $numeric = $this->normalizeExcelNumber($cells[$nextRef]);
+            if ($numeric === null) {
+                continue;
+            }
+
+            $matches[] = [
+                'column' => $parts[1],
+                'row' => (int) $parts[2],
+                'value' => $numeric,
+            ];
+        }
+
+        if ($matches === []) {
+            return null;
+        }
+
+        usort($matches, function (array $a, array $b) {
+            return [$a['row'], $a['column']] <=> [$b['row'], $b['column']];
+        });
+
+        $summaryMatch = collect($matches)->first(fn (array $match) => $match['column'] === 'P');
+        if ($summaryMatch) {
+            return $summaryMatch['value'];
+        }
+
+        return $matches[count($matches) - 1]['value'];
+    }
+
+    private function buildMoraSnapshot(Carbon $corte): array
+    {
+        $rows = Credito::query()
+            ->where('estado', 'EnMora')
+            ->whereDate('fecha_otorgacion', '<=', $corte->toDateString())
+            ->get();
+
+        $moraMuerta = $rows->filter(fn (Credito $credito) => $this->isMoraMuerta($credito));
+        $moraActiva = $rows->reject(fn (Credito $credito) => $this->isMoraMuerta($credito));
+
+        return [
+            'mora_activa' => round((float) $moraActiva->sum('saldo_pendiente'), 2),
+            'mora_muerta' => round((float) $moraMuerta->sum('saldo_pendiente'), 2),
+            'total' => round((float) $rows->sum('saldo_pendiente'), 2),
+        ];
+    }
+
+    private function isMoraMuerta(Credito $credito): bool
+    {
+        $tabla = $credito->tabla_amortizacion;
+        $json = is_string($tabla) ? $tabla : json_encode($tabla, JSON_UNESCAPED_UNICODE);
+        return is_string($json) && str_contains($json, '"mora_clasificacion":"mora_muerta"')
+            || is_string($json) && str_contains($json, '"mora_clasificacion": "mora_muerta"');
+    }
+
+    private function countGrupalMembersAt(Carbon $corte): int
+    {
+        $groupIds = Credito::query()
+            ->where('tipo_credito', 'Grupal')
+            ->where('estado', 'Activo')
+            ->whereDate('fecha_otorgacion', '<=', $corte->toDateString())
+            ->whereNotNull('id_grupo')
+            ->pluck('id_grupo');
+
+        if ($groupIds->isEmpty()) {
+            return 0;
+        }
+
+        return (int) \DB::table('cliente_grupo')
+            ->whereIn('id_grupo', $groupIds->all())
+            ->distinct('id_cliente')
+            ->count('id_cliente');
+    }
+
+    private function resolveCierreWorkbookPath(Carbon $corte): ?string
+    {
+        $root = dirname(base_path());
+        $mesNombre = mb_strtoupper($corte->locale('es')->isoFormat('MMMM'));
+        $year = $corte->year;
+
+        $candidates = [
+            "{$root}/scripts/Actualizados/CIERRE DE MES DE {$mesNombre}.xlsx",
+            "{$root}/scripts/Actualizados/CIERRE DE MES DE {$mesNombre} {$year}.xlsx",
+            "{$root}/scripts/Actualizados/CIERRE DE MES DE {$mesNombre} DE {$year}.xlsx",
+            "{$root}/scripts/Actualizados/CIERRE {$mesNombre} {$year}.xlsx",
+            "{$root}/scripts/Actualizados/CIERRE DE {$mesNombre}.xlsx",
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (is_file($candidate)) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private function readDistribucionCarterasFromWorkbook(Carbon $corte): ?array
+    {
+        $path = $this->resolveCierreWorkbookPath($corte);
+        if ($path === null) {
+            return null;
+        }
+
+        try {
+            $sheetNames = ['CIERRE DE ' . mb_strtoupper($corte->locale('es')->isoFormat('MMMM')), 'CIERRE', 'Sheet1'];
+            $cells = [];
+            foreach ($sheetNames as $name) {
+                $cells = $this->readWorkbookSheetCells($path, $name);
+                if ($cells !== []) {
+                    break;
+                }
+            }
+
+            if ($cells === []) {
+                $zip = new ZipArchive();
+                if ($zip->open($path) === true) {
+                    $workbookXml = $zip->getFromName('xl/workbook.xml');
+                    if ($workbookXml !== false) {
+                        $wb = new SimpleXMLElement($workbookXml);
+                        $wb->registerXPathNamespace('a', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main');
+                        $firstSheet = ($wb->xpath('//a:sheets/a:sheet') ?: [])[0] ?? null;
+                        if ($firstSheet) {
+                            $name = (string) ($firstSheet['name'] ?? '');
+                            $zip->close();
+                            $cells = $this->readWorkbookSheetCells($path, $name);
+                        } else {
+                            $zip->close();
+                        }
+                    } else {
+                        $zip->close();
+                    }
+                }
+            }
+
+            if ($cells === []) {
+                return null;
+            }
+
+            $distRow = null;
+            $distCol = null;
+            foreach ($cells as $r => $v) {
+                if (trim(mb_strtoupper((string) $v)) === 'DISTRIBUCION DE CARTERAS') {
+                    if (preg_match('/^([A-Z]+)(\d+)$/', $r, $m)) {
+                        $distCol = $m[1];
+                        $distRow = (int) $m[2];
+                        break;
+                    }
+                }
+            }
+
+            if ($distRow === null || $distCol === null) {
+                return null;
+            }
+
+            $headerRow = $distRow + 1;
+            $colResp = $distCol;
+            $colAntRef = $this->incrementExcelColumn($colResp . $headerRow);
+            if ($colAntRef === null) {
+                return null;
+            }
+            preg_match('/^([A-Z]+)(\d+)$/', $colAntRef, $m);
+            $colAnt = $m[1];
+
+            $colActRef = $this->incrementExcelColumn($colAnt . $headerRow);
+            if ($colActRef === null) {
+                return null;
+            }
+            preg_match('/^([A-Z]+)(\d+)$/', $colActRef, $m);
+            $colAct = $m[1];
+
+            $labelAnt = trim((string) ($cells[$colAnt . $headerRow] ?? 'CLIENT/ANT'));
+            $labelAct = trim((string) ($cells[$colAct . $headerRow] ?? 'CLIENT/ACT'));
+
+            $registros = [];
+            $totalAnt = null;
+            $totalAct = null;
+
+            for ($row = $headerRow + 1; $row <= $headerRow + 25; $row++) {
+                $resp = trim((string) ($cells[$colResp . $row] ?? ''));
+                $antVal = $this->normalizeExcelNumber($cells[$colAnt . $row] ?? null);
+                $actVal = $this->normalizeExcelNumber($cells[$colAct . $row] ?? null);
+
+                if ($resp === '' && $antVal === null && $actVal === null) {
+                    break;
+                }
+
+                if ($resp === '' && ($antVal !== null || $actVal !== null)) {
+                    $totalAnt = (int) ($antVal ?? 0);
+                    $totalAct = (int) ($actVal ?? 0);
+                    break;
+                }
+
+                if ($resp !== '') {
+                    $registros[] = [
+                        'asesor' => $this->formatAccionistaLabel($resp),
+                        'nombre' => $this->formatAccionistaLabel($resp),
+                        'clientes_mes_anterior' => (int) ($antVal ?? 0),
+                        'clientes_mes_actual' => (int) ($actVal ?? 0),
+                        'clientes_individuales_activos' => (int) ($antVal ?? 0),
+                        'clientes_totales' => (int) ($actVal ?? 0),
+                    ];
+                }
+            }
+
+            if ($registros === []) {
+                return null;
+            }
+
+            $computedTotalAnt = (int) collect($registros)->sum('clientes_mes_anterior');
+            $computedTotalAct = (int) collect($registros)->sum('clientes_mes_actual');
+
+            return [
+                'mes_anterior_label' => $labelAnt,
+                'mes_actual_label' => $labelAct,
+                'registros' => $registros,
+                'total_mes_anterior' => $totalAnt ?? $computedTotalAnt,
+                'total_mes_actual' => $totalAct ?? $computedTotalAct,
+                'total_individuales' => $totalAnt ?? $computedTotalAnt,
+                'total_clientes' => $totalAct ?? $computedTotalAct,
+            ];
+        } catch (\Throwable $e) {
+            Log::warning('No se pudo leer distribucion de carteras desde workbook de cierre.', [
+                'path' => $path,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    private function buildDistribucionCarteras(Carbon $corte): array
+    {
+        $fromWorkbook = $this->readDistribucionCarterasFromWorkbook($corte);
+        if ($fromWorkbook !== null) {
+            return $fromWorkbook;
+        }
+
+        $corteAnterior = $corte->copy()->startOfMonth()->subDay();
+        $mesAnteriorShort = mb_strtoupper(substr($corteAnterior->locale('es')->isoFormat('MMM'), 0, 3));
+        $mesActualShort = mb_strtoupper(substr($corte->locale('es')->isoFormat('MMM'), 0, 3));
+
+        $mesAnteriorLabel = "CLIENT/{$mesAnteriorShort}";
+        $mesActualLabel = "CLIENT/{$mesActualShort}";
+
+        $individualesActual = Credito::query()
+            ->selectRaw('id_asesor, COUNT(*) as total')
+            ->where('tipo_credito', 'Individual')
+            ->where('estado', 'Activo')
+            ->whereDate('fecha_otorgacion', '<=', $corte->toDateString())
+            ->groupBy('id_asesor')
+            ->pluck('total', 'id_asesor');
+
+        $individualesAnterior = Credito::query()
+            ->selectRaw('id_asesor, COUNT(*) as total')
+            ->where('tipo_credito', 'Individual')
+            ->where('estado', 'Activo')
+            ->whereDate('fecha_otorgacion', '<=', $corteAnterior->toDateString())
+            ->groupBy('id_asesor')
+            ->pluck('total', 'id_asesor');
+
+        $asesorIds = collect($individualesActual->keys())
+            ->merge($individualesAnterior->keys())
+            ->filter()
+            ->unique()
+            ->values();
+
+        $asesores = Asesor::query()
+            ->whereIn('id', $asesorIds->all())
+            ->orderBy('nombre_asesor')
+            ->get();
+
+        $rows = $asesores->map(function (Asesor $asesor) use ($individualesAnterior, $individualesActual) {
+            $cantAnterior = (int) ($individualesAnterior[$asesor->id] ?? 0);
+            $cantActual = (int) ($individualesActual[$asesor->id] ?? 0);
+
+            return [
+                'asesor' => $this->formatAccionistaLabel($asesor->nombre_asesor),
+                'nombre' => $this->formatAccionistaLabel($asesor->nombre_asesor),
+                'clientes_mes_anterior' => $cantAnterior,
+                'clientes_mes_actual' => $cantActual,
+                'clientes_individuales_activos' => $cantAnterior,
+                'clientes_totales' => $cantActual,
+            ];
+        })->sortBy('asesor')->values();
+
+        $totalAnterior = (int) $rows->sum('clientes_mes_anterior');
+        $totalActual = (int) $rows->sum('clientes_mes_actual');
+
+        return [
+            'mes_anterior_label' => $mesAnteriorLabel,
+            'mes_actual_label' => $mesActualLabel,
+            'registros' => $rows->all(),
+            'total_mes_anterior' => $totalAnterior,
+            'total_mes_actual' => $totalActual,
+            'total_individuales' => $totalAnterior,
+            'total_clientes' => $totalActual,
+        ];
+    }
+
+    private function formatAccionistaLabel(string $name): string
+    {
+        return match (mb_strtoupper(trim($name))) {
+            'JOSSUE GIBRAN SOBREVILLA DIAZ' => 'JOSSUE GIBRAN S. DIAZ',
+            'JULIO CESAR RAMIREZ RAMOS' => 'JULIO CESAR RAMIREZ RAMOS',
+            'GIBRAN URIEL SOBREVILLA HERNANDEZ' => 'GIBRAN URIEL SOBREVILLA',
+            'FREDY PONCE SANCHEZ' => 'FREDY PONCE SANCHEZ',
+            default => $name,
+        };
     }
 
     private function buildCarteraResumen(string $tipoCredito): array

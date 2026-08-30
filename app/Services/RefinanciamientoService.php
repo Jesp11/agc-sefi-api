@@ -12,7 +12,8 @@ class RefinanciamientoService
     public function __construct(
         private MoraCalculationService $moraService,
         private CicloService $cicloService,
-        private FlujoCajaService $flujoCajaService
+        private FlujoCajaService $flujoCajaService,
+        private IndicadoresOperativosService $indicadoresOperativosService
     ) {}
 
     public function refinanciar(Credito $creditoAnterior, array $data): Credito
@@ -94,6 +95,21 @@ class RefinanciamientoService
                 $nuevoCredito,
                 $montoNeto,
                 "DESEMBOLSO REFINANCIAMIENTO #{$nuevoCredito->num_prog} (origen #{$creditoAnterior->num_prog}) — {$beneficiario}"
+            );
+
+            $this->indicadoresOperativosService->registrarAumentoCartera(
+                $nuevoCredito->fecha_otorgacion ?? now()->toDateString(),
+                $montoNeto,
+                $nuevoCredito,
+                $creditoAnterior,
+                'creditos.refinanciamiento',
+                "Aumento de cartera por refinanciamiento de {$beneficiario}",
+                [
+                    'num_prog_anterior' => $creditoAnterior->num_prog,
+                    'saldo_anterior' => round($saldoAnterior, 2),
+                    'monto_otorgado_nuevo' => round($montoOtorgado, 2),
+                    'monto_neto' => round($montoNeto, 2),
+                ]
             );
 
             return $nuevoCredito->load(['cliente', 'grupo', 'asesor', 'creditoPadre']);
