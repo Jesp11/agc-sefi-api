@@ -193,6 +193,10 @@ class FlujoCajaService
 
     private function aplicarMovimiento(float $saldo, MovimientoCaja $mov): float
     {
+        if ($mov->categoria === 'SaldoInicial') {
+            return $mov->tipo === 'Ingreso' ? (float) $mov->monto : -(float) $mov->monto;
+        }
+
         if ($mov->tipo === 'Ingreso') {
             return $saldo + (float) $mov->monto;
         }
@@ -228,14 +232,7 @@ class FlujoCajaService
             ->whereMonth('fecha', $mes)
             ->get();
 
-        $ingresos = $movimientosMes->where('tipo', 'Ingreso')->sum('monto');
-        $egresos = $movimientosMes->where('tipo', 'Egreso')->sum('monto');
-
-        $ultimoDelMes = MovimientoCaja::whereYear('fecha', $anio)
-            ->whereMonth('fecha', $mes)
-            ->orderByDesc('fecha')
-            ->orderByDesc('id')
-            ->first();
+        $saldoInicialRow = $movimientosMes->where('categoria', 'SaldoInicial')->first();
 
         $saldoAnterior = MovimientoCaja::where(function ($q) use ($anio, $mes) {
             $q->whereYear('fecha', '<', $anio)
@@ -247,13 +244,39 @@ class FlujoCajaService
             ->orderByDesc('id')
             ->value('saldo_resultante');
 
+        if ($saldoInicialRow) {
+            $saldoInicialMes = $saldoInicialRow->tipo === 'Ingreso'
+                ? (float) $saldoInicialRow->monto
+                : -(float) $saldoInicialRow->monto;
+        } else {
+            $saldoInicialMes = (float) ($saldoAnterior ?? 0);
+        }
+
+        $ingresos = $movimientosMes
+            ->where('tipo', 'Ingreso')
+            ->where('categoria', '!=', 'SaldoInicial')
+            ->sum('monto');
+
+        $egresos = $movimientosMes
+            ->where('tipo', 'Egreso')
+            ->where('categoria', '!=', 'SaldoInicial')
+            ->sum('monto');
+
+        $ultimoDelMes = MovimientoCaja::whereYear('fecha', $anio)
+            ->whereMonth('fecha', $mes)
+            ->orderByDesc('fecha')
+            ->orderByDesc('id')
+            ->first();
+
+        $disponible = round($saldoInicialMes + (float) $ingresos - (float) $egresos, 2);
+
         $distribucionIngresos = $movimientosMes
-            ->filter(fn ($m) => $m->cuenta && $m->tipo === 'Ingreso')
+            ->filter(fn ($m) => $m->cuenta && $m->tipo === 'Ingreso' && $m->categoria !== 'SaldoInicial')
             ->groupBy('cuenta')
             ->map(fn ($items) => round((float) $items->sum('monto'), 2));
 
         $distribucionEgresos = $movimientosMes
-            ->filter(fn ($m) => $m->cuenta && $m->tipo === 'Egreso')
+            ->filter(fn ($m) => $m->cuenta && $m->tipo === 'Egreso' && $m->categoria !== 'SaldoInicial')
             ->groupBy('cuenta')
             ->map(fn ($items) => round((float) $items->sum('monto'), 2));
 
@@ -268,8 +291,6 @@ class FlujoCajaService
         $mora = Credito::where('estado', 'EnMora')->sum('saldo_pendiente');
         $ahorroPersonal = AhorroPersonal::sum('saldo');
         $ahorroGrupal = AhorroSocio::sum('saldo');
-        $saldoInicialMes = round((float) ($saldoAnterior ?? 0), 2);
-        $disponible = round($saldoInicialMes + (float) $ingresos - (float) $egresos, 2);
         $gastosOperativos = round((float) $movimientosMes
             ->where('tipo', 'Egreso')
             ->where('categoria', 'GastoOperativo')
@@ -278,11 +299,12 @@ class FlujoCajaService
         return [
             'anio' => $anio,
             'mes' => $mes,
-            'saldo_inicial_mes' => $saldoInicialMes,
+            'saldo_inicial_mes' => round($saldoInicialMes, 2),
             'total_ingresos' => round((float) $ingresos, 2),
             'total_egresos' => round((float) $egresos, 2),
+            'flujo_neto' => round((float) $ingresos - (float) $egresos, 2),
             'saldo_anterior' => round((float) ($saldoAnterior ?? 0), 2),
-            'saldo_actual' => round((float) ($ultimoDelMes?->saldo_resultante ?? $saldoAnterior ?? 0), 2),
+            'saldo_actual' => round((float) ($ultimoDelMes?->saldo_resultante ?? $disponible), 2),
             'disponible' => $disponible,
             'gastos_operativos' => $gastosOperativos,
             'distribucion_cuentas' => [

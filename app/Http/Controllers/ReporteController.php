@@ -102,7 +102,6 @@ class ReporteController extends Controller
         $data = $request->validate([
             'mes' => 'required|date_format:Y-m',
             'aumento_cartera' => 'nullable|numeric',
-            'cancelacion_credito_vehicular' => 'nullable|numeric',
             'pase_a_cartera_mora' => 'nullable|numeric',
             'productividad_mensual' => 'nullable|numeric',
         ]);

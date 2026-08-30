@@ -110,6 +110,7 @@ Route::middleware('auth:api')->group(function () {
     Route::post('inversionistas', [InversionistaController::class, 'store']);
     Route::put('inversionistas/{id}', [InversionistaController::class, 'update']);
     Route::post('inversionistas/{id}/aportaciones', [InversionistaController::class, 'aportacion']);
+    Route::post('inversionistas/{id}/rendimiento', [InversionistaController::class, 'pagoRendimiento']);
     Route::get('capital', [CapitalController::class, 'index']);
     Route::get('gastos', [GastoController::class, 'index']);
     Route::post('gastos', [GastoController::class, 'store']);

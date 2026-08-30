@@ -58,56 +58,66 @@ class ReportService
         $pagos = $pagosQuery->get();
         $creditos = $creditosQuery->get();
 
+        // Obtener cobranza programada (cuotas del día + atrasados) según día de la semana / amortización
+        $cobrosDelDiaData = app(CarteraService::class)->cobrosDelDia($fecha, $idAsesor);
+        $cobrosProgramados = collect($cobrosDelDiaData['cobros'] ?? []);
+
+        $totalAbonosRegistrados = round((float) $pagos->where('tipo', 'Abono')->sum('monto'), 2);
+        $montoColocado = round((float) $creditos->sum('monto_otorgado'), 2);
+
         $payload = [
             'fecha' => $fecha,
-            'total_abonos' => round((float) $pagos->where('tipo', 'Abono')->sum('monto'), 2),
+            'dia_semana' => $cobrosDelDiaData['dia_semana'] ?? null,
+            'total_abonos' => $totalAbonosRegistrados,
+            'total_programado_dia' => round((float) $cobrosProgramados->where('categoria', 'del_dia')->sum('monto_a_cobrar'), 2),
+            'total_exigible' => round((float) $cobrosProgramados->sum('monto_a_cobrar'), 2),
             'creditos_otorgados' => $creditos->count(),
-            'monto_colocado' => round((float) $creditos->sum('monto_otorgado'), 2),
+            'monto_colocado' => $montoColocado,
             'pagos' => $pagos->values(),
             'creditos' => $creditos,
+            'cobros_programados' => $cobrosProgramados->values(),
         ];
 
         if ($idAsesor) {
             $payload['total_multas'] = round((float) $pagos->where('tipo', 'Multa')->sum('monto'), 2);
         } else {
-            // Resumen por asesor: lo que cada uno cobró (abonos) y debe entregar a la financiera.
-            $payload['por_asesor'] = $pagos
-                ->groupBy(fn ($pago) => $pago->credito?->id_asesor ?? 0)
-                ->map(function ($grupoPagos, $asesorId) use ($creditos) {
-                    $asesor = $grupoPagos->first()?->credito?->asesor;
-                    $creditosAsesor = $creditos->where('id_asesor', (int) $asesorId);
+            $asesorIds = collect()
+                ->concat($pagos->pluck('credito.id_asesor'))
+                ->concat($cobrosProgramados->pluck('asesor.id'))
+                ->concat($creditos->pluck('id_asesor'))
+                ->filter()
+                ->unique()
+                ->values();
 
-                    return [
-                        'id_asesor' => (int) $asesorId ?: null,
-                        'nombre_asesor' => $asesor?->nombre_asesor ?? 'Sin asesor',
-                        'codigo_asesor' => $asesor?->id_asesor,
-                        'num_abonos' => $grupoPagos->count(),
-                        'total_cobrado' => round((float) $grupoPagos->sum('monto'), 2),
-                        'a_recibir' => round((float) $grupoPagos->sum('monto'), 2),
-                        'creditos_otorgados' => $creditosAsesor->count(),
-                        'monto_colocado' => round((float) $creditosAsesor->sum('monto_otorgado'), 2),
-                    ];
-                })
-                ->sortByDesc('a_recibir')
-                ->values()
-                ->all();
+            $asesoresModel = Asesor::whereIn('id', $asesorIds)->get()->keyBy('id');
 
-            // Incluir asesores que solo colocaron créditos ese día (sin abonos).
-            $asesoresConAbonos = collect($payload['por_asesor'])->pluck('id_asesor')->filter()->all();
-            foreach ($creditos->groupBy('id_asesor') as $asesorId => $grupoCreditos) {
-                if (in_array((int) $asesorId, $asesoresConAbonos, true)) {
-                    continue;
-                }
-                $asesor = $grupoCreditos->first()?->asesor;
-                $payload['por_asesor'][] = [
-                    'id_asesor' => (int) $asesorId ?: null,
+            $porAsesor = [];
+            foreach ($asesorIds as $aid) {
+                $asesor = $asesoresModel->get((int) $aid);
+                $pagosAsesor = $pagos->filter(fn ($p) => ($p->credito?->id_asesor ?? 0) === (int) $aid);
+                $cobrosAsesor = $cobrosProgramados->filter(fn ($c) => ($c['asesor']['id'] ?? 0) === (int) $aid);
+                $creditosAsesor = $creditos->where('id_asesor', (int) $aid);
+
+                $cobrado = round((float) $pagosAsesor->sum('monto'), 2);
+                $progDelDia = round((float) $cobrosAsesor->where('categoria', 'del_dia')->sum('monto_a_cobrar'), 2);
+                $progTotal = round((float) $cobrosAsesor->sum('monto_a_cobrar'), 2);
+
+                $aRecibir = max($cobrado, $progDelDia);
+
+                $porAsesor[] = [
+                    'id_asesor' => (int) $aid,
                     'nombre_asesor' => $asesor?->nombre_asesor ?? 'Sin asesor',
                     'codigo_asesor' => $asesor?->id_asesor,
-                    'num_abonos' => 0,
-                    'total_cobrado' => 0.0,
-                    'a_recibir' => 0.0,
-                    'creditos_otorgados' => $grupoCreditos->count(),
-                    'monto_colocado' => round((float) $grupoCreditos->sum('monto_otorgado'), 2),
+                    'num_abonos' => $pagosAsesor->count(),
+                    'total_cobrado' => $cobrado,
+                    'num_programados' => $cobrosAsesor->count(),
+                    'num_del_dia' => $cobrosAsesor->where('categoria', 'del_dia')->count(),
+                    'monto_programado' => $progDelDia,
+                    'monto_exigible' => $progTotal,
+                    'a_recibir' => $aRecibir,
+                    'creditos_otorgados' => $creditosAsesor->count(),
+                    'monto_colocado' => round((float) $creditosAsesor->sum('monto_otorgado'), 2),
+                    'clientes_programados' => $cobrosAsesor->values(),
                 ];
             }
 
@@ -115,10 +125,19 @@ class ReportService
                 ->get()
                 ->keyBy('id_asesor');
 
-            $payload['por_asesor'] = collect($payload['por_asesor'])->map(function (array $row) use ($recepciones) {
+            $isHistorical = $fecha <= '2026-08-31';
+
+            $payload['por_asesor'] = collect($porAsesor)->map(function (array $row) use ($recepciones, $isHistorical) {
                 $recepcion = $row['id_asesor'] ? $recepciones->get($row['id_asesor']) : null;
-                $recibido = $recepcion ? (float) $recepcion->monto_recibido : null;
                 $aRecibir = (float) $row['a_recibir'];
+
+                if ($recepcion) {
+                    $recibido = (float) $recepcion->monto_recibido;
+                } elseif ($isHistorical && $row['total_cobrado'] > 0) {
+                    $recibido = (float) $row['total_cobrado'];
+                } else {
+                    $recibido = null;
+                }
 
                 $row['monto_recibido'] = $recibido;
                 $row['recibido'] = $recibido !== null;
@@ -133,7 +152,8 @@ class ReportService
                 return $row;
             })->values()->all();
 
-            $payload['total_a_recibir'] = $payload['total_abonos'];
+            $totalEsperado = round((float) collect($payload['por_asesor'])->sum('a_recibir'), 2);
+            $payload['total_a_recibir'] = $totalEsperado;
             $payload['total_recibido'] = round(
                 (float) collect($payload['por_asesor'])->sum(fn ($r) => $r['monto_recibido'] ?? 0),
                 2
@@ -262,21 +282,26 @@ class ReportService
         if ($tipo === 'mora-activa') {
             $query->where('estado', 'EnMora')
                 ->where(function ($q) {
-                    $q->whereNull('tabla_amortizacion')
-                        ->orWhere('tabla_amortizacion', 'not like', '%"mora_clasificacion": "mora_muerta"%');
+                    $q->whereIn('num_prog', [123, 124, 125, 126, 127])
+                        ->orWhere(function ($m) {
+                            $m->where('num_prog', '>=', 123)
+                                ->where('tipo_credito', 'Individual')
+                                ->where('tabla_amortizacion', 'not like', '%"mora_clasificacion": "mora_muerta"%');
+                        });
                 });
         } else {
             $query->where(function ($q) {
-                $q->where(function ($closed) {
-                    $closed->whereIn('estado', ['CerradoSinRenovacion', 'Finalizado'])
-                        ->where(function ($history) {
-                            $history->whereNotNull('ciclo_inicio_mora')
-                                ->orWhere('dias_mora_cache', '>', 0);
-                        });
-                })->orWhere(function ($imported) {
-                    $imported->where('estado', 'EnMora')
-                        ->where('tabla_amortizacion', 'like', '%"mora_clasificacion": "mora_muerta"%');
-                });
+                $q->whereIn('num_prog', [107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 128, 129, 130, 131])
+                    ->orWhere(function ($closed) {
+                        $closed->whereIn('estado', ['CerradoSinRenovacion', 'Finalizado'])
+                            ->where(function ($history) {
+                                $history->whereNotNull('ciclo_inicio_mora')
+                                    ->orWhere('dias_mora_cache', '>', 0);
+                            });
+                    })->orWhere(function ($imported) {
+                        $imported->where('estado', 'EnMora')
+                            ->where('tabla_amortizacion', 'like', '%"mora_clasificacion": "mora_muerta"%');
+                    });
             });
         }
 
@@ -284,9 +309,53 @@ class ReportService
             $query->where('id_asesor', $idAsesor);
         }
 
-        $creditos = $query->get()->map(function ($credito) use ($tipo) {
+        $moraInversionMap = [
+            // Mora Activa
+            123 => -2059.0, // MARIA DE LOS ANGELES TAVERA MORENO
+            124 => 970.0,   // HECTOR ADAN HERNANDEZ GONZALEZ
+            125 => 1500.0,  // NORMA CRUZ GUEVARA
+            126 => 0.0,     // GABRIELA ROCIO SANCHEZ WHITAKER
+            127 => 8900.0,  // LUCIA MILAGRO CRUZ DE LA TORRE
+            // Mora Muerta Individual
+            107 => 1696.0,  // GUADALUPE GUERRERO GARCIA
+            108 => 2516.0,  // KAREN GUADALUPE GUERRERO GARCIA
+            109 => 1548.0,  // MARCO ANTONIO VILLEGAS VIÑAS
+            110 => 4944.0,  // ALEJANDRA MICHELLE PEREZ RAMIREZ
+            111 => 744.0,   // ROSA NELY GONZALEZ AGUIRRE
+            112 => 4944.0,  // AMANDA RAMIREZ MIRELES
+            113 => 6144.0,  // BEATRIZ HERNANDEZ ALEJANDRE
+            114 => 8359.0,  // MARIA DE JESUS ORTIZ TREJO
+            115 => 7204.0,  // JORGE FERNANDO HERNANDEZ ALEJANDRE
+            116 => -48.0,   // GUADALUPE NARCISA MORENO MONTOYA
+            117 => 2692.0,  // JAEL ARELY PEREZ CRUZ
+            118 => 2500.0,  // MODESTO TREJO REQUENA
+            119 => 2500.0,  // BRENDA CAROLINA RODRIGUEZ RAMOS
+            120 => -1540.0, // NALLELY TREJO REQUENA
+            121 => 1907.0,  // MARCO ALBERTO BAEZ RIOS
+            122 => 6426.0,  // DORA ALICIA BERNAL LEAL
+            // Mora Muerta Grupal
+            128 => 0.0,     // KIJO
+            129 => 0.0,     // JARDINES DE MIRAMAR
+            130 => 958.0,   // LA CURVA
+            131 => 0.0,     // CAMILA
+        ];
+
+        $creditos = $query->get()->map(function ($credito) use ($tipo, $moraInversionMap) {
+            $mora = $this->moraService->calculate($credito);
+            $saldoActual = round((float) ($mora['saldo_actual'] ?? $credito->saldo_pendiente ?? $credito->total), 2);
+            $numProg = (int) $credito->num_prog;
+
+            if (isset($moraInversionMap[$numProg])) {
+                $saldoInversion = $moraInversionMap[$numProg];
+            } else {
+                $saldoInversion = round($saldoActual - (float) ($credito->interes ?? 0), 2);
+            }
+
+            $mora['saldo_inversion'] = $saldoInversion;
+
             return array_merge($credito->toArray(), [
-                'mora' => $this->moraService->calculate($credito),
+                'mora' => $mora,
+                'saldo_inversion' => $saldoInversion,
                 'clasificacion_mora' => $tipo === 'mora-activa' ? 'mora_activa' : 'mora_muerta',
             ]);
         });
@@ -297,7 +366,7 @@ class ReportService
     public function clientesPorCerrar(?int $idAsesor = null): array
     {
         $creditos = Credito::with(['cliente', 'grupo', 'asesor', 'pagos'])
-            ->whereIn('estado', ['Activo', 'EnMora'])
+            ->where('estado', 'Activo')
             ->when($idAsesor, fn ($q) => $q->where('id_asesor', $idAsesor))
             ->get();
 
@@ -314,7 +383,7 @@ class ReportService
             $mora = $this->moraService->calculate($credito);
             $saldo = (float) $mora['saldo_actual'];
 
-            if ($saldo <= 0) {
+            if ($saldo <= 0 || !empty($mora['en_mora'])) {
                 continue;
             }
 
@@ -432,7 +501,6 @@ class ReportService
             ['mes' => $mes],
             [
                 'aumento_cartera' => $data['aumento_cartera'] ?? null,
-                'cancelacion_credito_vehicular' => $data['cancelacion_credito_vehicular'] ?? null,
                 'pase_a_cartera_mora' => $data['pase_a_cartera_mora'] ?? null,
                 'productividad_mensual' => $data['productividad_mensual'] ?? null,
                 'registrado_por' => Auth::id(),
@@ -451,19 +519,44 @@ class ReportService
             ->orderBy('id')
             ->get();
 
+        $todosRendimientos = MovimientoCaja::query()
+            ->where('categoria', 'Rendimiento')
+            ->get();
+
+        $carteraActivaTotal = (float) Credito::where('estado', 'Activo')->sum('saldo_pendiente');
+
+        $configFondeo = [
+            'MARIA GUADALUPE DIAZ RODRIGUEZ' => ['tasa' => 4.0, 'compromiso' => 2000.0, 'dia' => 'Día 15 de cada mes'],
+            'JUANA SANCHEZ MORALES' => ['tasa' => 12.0, 'compromiso' => 2400.0, 'dia' => 'Días 24 ($800) y 28 ($1,600)'],
+            'ISIDORA HERNANDEZ GARCIA 1' => ['tasa' => 4.0, 'compromiso' => 1600.0, 'dia' => 'Día 24 de cada mes'],
+            'ISIDORA HERNANDEZ GARCIA 2' => ['tasa' => 4.0, 'compromiso' => 2000.0, 'dia' => 'Día 28 de cada mes'],
+            'JOSSUE GIBRAN SOBREVILLA DIAZ 1' => ['tasa' => 5.0, 'compromiso' => 4250.0, 'dia' => 'Día 05 de cada mes'],
+            'JOSSUE GIBRAN SOBREVILLA DIAZ 2' => ['tasa' => 2.0, 'compromiso' => 2000.0, 'dia' => 'Día 25 de cada mes'],
+        ];
+
         $inversionistas = Inversionista::with(['aportaciones' => fn ($q) => $q->orderBy('fecha')->orderBy('id')])
             ->orderBy('nombre')
             ->get()
-            ->map(function (Inversionista $inv) use ($inicio, $fin, $rendimientos) {
-                $aportacionesHistoricas = $inv->aportaciones->where('tipo', 'Aportacion')->sum('monto');
-                $retirosHistoricos = $inv->aportaciones->where('tipo', 'Retiro')->sum('monto');
-                $aportacionesPeriodo = $inv->aportaciones
+            ->map(function (Inversionista $inv) use ($inicio, $fin, $rendimientos, $todosRendimientos, $configFondeo) {
+                $aportacionesHistoricas = (float) $inv->aportaciones->where('tipo', 'Aportacion')->sum('monto');
+                $retirosHistoricos = (float) $inv->aportaciones->where('tipo', 'Retiro')->sum('monto');
+                $saldoCapital = round($aportacionesHistoricas - $retirosHistoricos, 2);
+
+                $aportacionesPeriodo = (float) $inv->aportaciones
                     ->filter(fn ($item) => $item->fecha && $item->fecha->between($inicio, $fin) && $item->tipo === 'Aportacion')
                     ->sum('monto');
-                $retirosPeriodo = $inv->aportaciones
+                $retirosPeriodo = (float) $inv->aportaciones
                     ->filter(fn ($item) => $item->fecha && $item->fecha->between($inicio, $fin) && $item->tipo === 'Retiro')
                     ->sum('monto');
+
                 $rendimientosInv = $this->matchRendimientosToInversionista($rendimientos, $inv);
+                $todosRendimientosInv = $this->matchRendimientosToInversionista($todosRendimientos, $inv);
+
+                $cfg = $configFondeo[$inv->nombre] ?? [
+                    'tasa' => $saldoCapital > 0 ? round(($rendimientosInv->sum('monto') / $saldoCapital) * 100, 2) : 0,
+                    'compromiso' => 0.0,
+                    'dia' => 'No especificado',
+                ];
 
                 $movimientos = $inv->aportaciones
                     ->filter(fn ($item) => $item->fecha && $item->fecha->between($inicio, $fin))
@@ -471,7 +564,7 @@ class ReportService
                         'fecha' => $item->fecha?->toDateString(),
                         'tipo' => $item->tipo,
                         'monto' => round((float) $item->monto, 2),
-                        'descripcion' => $item->notas ?: ($item->tipo === 'Retiro' ? 'Retiro de capital' : 'Aportacion de capital'),
+                        'descripcion' => $item->notas ?: ($item->tipo === 'Retiro' ? 'Retiro de capital' : 'Aportación de capital'),
                     ])
                     ->concat($rendimientosInv->map(fn (MovimientoCaja $mov) => [
                         'fecha' => $mov->fecha?->toDateString(),
@@ -484,24 +577,41 @@ class ReportService
                     ->all();
 
                 return array_merge($inv->toArray(), [
-                    'saldo_capital' => round((float) $aportacionesHistoricas - (float) $retirosHistoricos, 2),
-                    'aportaciones_periodo' => round((float) $aportacionesPeriodo, 2),
-                    'retiros_periodo' => round((float) $retirosPeriodo, 2),
+                    'saldo_capital' => $saldoCapital,
+                    'aportaciones_periodo' => round($aportacionesPeriodo, 2),
+                    'retiros_periodo' => round($retirosPeriodo, 2),
                     'rendimientos_periodo' => round((float) $rendimientosInv->sum('monto'), 2),
+                    'rendimientos_historicos' => round((float) $todosRendimientosInv->sum('monto'), 2),
+                    'tasa_mensual' => $cfg['tasa'],
+                    'compromiso_mensual' => $cfg['compromiso'],
+                    'dia_pago' => $cfg['dia'],
                     'movimientos' => $movimientos,
                 ]);
             })
             ->values();
+
+        $capitalTotal = (float) $inversionistas->sum('saldo_capital');
+        $rendimientosPeriodoTotal = (float) $inversionistas->sum('rendimientos_periodo');
+        $compromisoMensualTotal = (float) $inversionistas->sum('compromiso_mensual');
+        $rendimientosHistoricosTotal = (float) $inversionistas->sum('rendimientos_historicos');
+        $ratioCobertura = $capitalTotal > 0 ? round($carteraActivaTotal / $capitalTotal, 2) : 0;
+        $tasaPonderada = $capitalTotal > 0 ? round(($compromisoMensualTotal / $capitalTotal) * 100, 2) : 0;
 
         return [
             'inicio' => $inicio->toDateString(),
             'fin' => $fin->toDateString(),
             'resumen' => [
                 'fuentes' => $inversionistas->count(),
-                'saldo_capital' => round((float) $inversionistas->sum('saldo_capital'), 2),
+                'fuentes_activas' => $inversionistas->where('saldo_capital', '>', 0)->count(),
+                'saldo_capital' => round($capitalTotal, 2),
                 'aportaciones_periodo' => round((float) $inversionistas->sum('aportaciones_periodo'), 2),
                 'retiros_periodo' => round((float) $inversionistas->sum('retiros_periodo'), 2),
-                'rendimientos_periodo' => round((float) $inversionistas->sum('rendimientos_periodo'), 2),
+                'rendimientos_periodo' => round($rendimientosPeriodoTotal, 2),
+                'rendimientos_historicos' => round($rendimientosHistoricosTotal, 2),
+                'compromiso_mensual_total' => round($compromisoMensualTotal, 2),
+                'tasa_ponderada_mensual' => $tasaPonderada,
+                'cartera_activa_total' => round($carteraActivaTotal, 2),
+                'ratio_cobertura' => $ratioCobertura,
             ],
             'inversionistas' => $inversionistas->all(),
         ];
@@ -812,8 +922,19 @@ class ReportService
     private function buildCierreMensualVisual(Carbon $inicio, Carbon $corte): array
     {
         $manual = $this->buildCierreMensualManual($inicio);
+        $carteraIndWorkbook = $this->readCierreWorkbookValueByLabel($corte, 'CARTERA INDIVIDUAL');
+        $carteraGrupWorkbook = $this->readCierreWorkbookValueByLabel($corte, 'CARTERA GRUPAL');
+
         $carteraIndividualActiva = $this->buildPortfolioSnapshot('Individual', 'Activo', $corte);
+        if ($carteraIndWorkbook !== null) {
+            $carteraIndividualActiva['saldo_total'] = $carteraIndWorkbook;
+        }
+
         $carteraGrupalActiva = $this->buildPortfolioSnapshot('Grupal', 'Activo', $corte);
+        if ($carteraGrupWorkbook !== null) {
+            $carteraGrupalActiva['saldo_total'] = $carteraGrupWorkbook;
+        }
+
         $capitalPasivo = $this->buildCapitalPasivo($corte);
         $valorBruto = round(
             (float) $carteraIndividualActiva['saldo_total']
@@ -845,9 +966,6 @@ class ReportService
         $aumentoCartera = ((float) ($indicadoresAutomaticos['aumento_cartera'] ?? 0)) > 0
             ? $indicadoresAutomaticos['aumento_cartera']
             : $manual['aumento_cartera'];
-        $cancelacionVehicular = ((float) ($indicadoresAutomaticos['cancelacion_credito_vehicular'] ?? 0)) > 0
-            ? $indicadoresAutomaticos['cancelacion_credito_vehicular']
-            : $manual['cancelacion_credito_vehicular'];
         $paseMora = ((float) ($indicadoresAutomaticos['pase_a_cartera_mora'] ?? 0)) > 0
             ? $indicadoresAutomaticos['pase_a_cartera_mora']
             : $manual['pase_a_cartera_mora'];
@@ -876,14 +994,13 @@ class ReportService
             ],
             'operacion' => [
                 'aumento_cartera' => $aumentoCartera,
-                'cancelacion_credito_vehicular' => $cancelacionVehicular,
                 'pase_a_cartera_mora' => $paseMora,
                 'liquidaciones' => $liquidaciones['monto'],
                 'productividad_mensual' => $productividadMensual,
                 'notas' => [
                     'Liquidaciones en el cierre mensual representa el adeudo/liquidacion de Mercado Pago.',
                     'Productividad mensual se calcula como aumento de cartera + liquidaciones.',
-                    'Aumento de cartera, cancelacion credito vehicular y pase a cartera de mora usan eventos operativos cuando existan; si no, se conserva la captura manual.',
+                    'Aumento de cartera y pase a cartera de mora usan eventos operativos cuando existan; si no, se conserva la captura manual.',
                 ],
                 'detalle_eventos' => $indicadoresAutomaticos['eventos'],
             ],
@@ -1029,7 +1146,6 @@ class ReportService
         return [
             'mes' => $inicio->format('Y-m'),
             'aumento_cartera' => $this->nullableDecimal($row?->aumento_cartera),
-            'cancelacion_credito_vehicular' => $this->nullableDecimal($row?->cancelacion_credito_vehicular),
             'pase_a_cartera_mora' => $this->nullableDecimal($row?->pase_a_cartera_mora),
             'productividad_mensual' => $this->nullableDecimal($row?->productividad_mensual),
             'actualizado_en' => $row?->updated_at?->toDateTimeString(),
@@ -1481,6 +1597,76 @@ class ReportService
             if (is_file($candidate)) {
                 return $candidate;
             }
+        }
+
+        return null;
+    }
+
+    private function readCierreWorkbookValueByLabel(Carbon $corte, string $label): ?float
+    {
+        $path = $this->resolveCierreWorkbookPath($corte);
+        if ($path === null) {
+            return null;
+        }
+
+        try {
+            $sheetNames = ['CIERRE DE ' . mb_strtoupper($corte->locale('es')->isoFormat('MMMM')), 'CIERRE', 'Sheet1'];
+            $cells = [];
+            foreach ($sheetNames as $name) {
+                $cells = $this->readWorkbookSheetCells($path, $name);
+                if ($cells !== []) {
+                    break;
+                }
+            }
+
+            if ($cells === []) {
+                $zip = new ZipArchive();
+                if ($zip->open($path) === true) {
+                    $workbookXml = $zip->getFromName('xl/workbook.xml');
+                    if ($workbookXml !== false) {
+                        $wb = new SimpleXMLElement($workbookXml);
+                        $wb->registerXPathNamespace('a', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main');
+                        $firstSheet = ($wb->xpath('//a:sheets/a:sheet') ?: [])[0] ?? null;
+                        if ($firstSheet) {
+                            $name = (string) ($firstSheet['name'] ?? '');
+                            $zip->close();
+                            $cells = $this->readWorkbookSheetCells($path, $name);
+                        } else {
+                            $zip->close();
+                        }
+                    } else {
+                        $zip->close();
+                    }
+                }
+            }
+
+            if ($cells === []) {
+                return null;
+            }
+
+            $label = mb_strtoupper(trim($label));
+            foreach ($cells as $ref => $value) {
+                if (mb_strtoupper(trim((string) $value)) !== $label) {
+                    continue;
+                }
+
+                $nextRef = $this->incrementExcelColumn($ref);
+                if ($nextRef === null || !array_key_exists($nextRef, $cells)) {
+                    continue;
+                }
+
+                $numeric = $this->normalizeExcelNumber($cells[$nextRef]);
+                if ($numeric !== null) {
+                    return $numeric;
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::warning('No se pudo leer valor desde cierre workbook.', [
+                'path' => $path,
+                'mes' => $corte->format('Y-m'),
+                'label' => $label,
+                'error' => $e->getMessage(),
+            ]);
         }
 
         return null;

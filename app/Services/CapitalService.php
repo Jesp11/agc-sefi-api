@@ -37,6 +37,49 @@ class CapitalService
         });
     }
 
+    public function registrarPagoRendimiento(int $inversionistaId, array $data): Aportacion
+    {
+        return DB::transaction(function () use ($inversionistaId, $data) {
+            $inversionista = \App\Models\Inversionista::findOrFail($inversionistaId);
+            $monto = abs((float) $data['monto']);
+            $fecha = $data['fecha'];
+            $cuenta = $data['cuenta'] ?? 'Efectivo';
+            $concepto = $data['concepto'] ?? "PAGO DE RENDIMIENTO — {$inversionista->nombre}";
+            $notas = $data['notas'] ?? null;
+
+            $aportacion = Aportacion::create([
+                'inversionista_id' => $inversionistaId,
+                'monto' => $monto,
+                'fecha' => $fecha,
+                'tipo' => 'Rendimiento',
+                'notas' => $notas,
+                'registrado_por' => auth()->id(),
+            ]);
+
+            MovimientoCapital::create([
+                'tipo' => 'Gasto',
+                'monto' => -$monto,
+                'referencia' => "REND-INV-{$aportacion->id}",
+                'fecha' => $fecha,
+                'descripcion' => $concepto,
+                'registrado_por' => auth()->id(),
+            ]);
+
+            // Registrar en Flujo de Caja como Egreso en categoría Rendimiento
+            app(FlujoCajaService::class)->registrar([
+                'fecha' => $fecha,
+                'motivo' => $concepto,
+                'tipo' => 'Egreso',
+                'monto' => $monto,
+                'categoria' => 'Rendimiento',
+                'cuenta' => $cuenta,
+                'referencia' => "REND-INV-{$aportacion->id}",
+            ]);
+
+            return $aportacion;
+        });
+    }
+
     public function registrarGasto(array $data): GastoOperativo
     {
         return DB::transaction(function () use ($data) {

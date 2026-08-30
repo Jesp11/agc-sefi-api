@@ -96,7 +96,6 @@ class IndicadoresOperativosService
         return [
             'aumento_cartera' => round((float) $rows->where('tipo', self::TIPO_AUMENTO_CARTERA)->sum('monto'), 2),
             'pase_a_cartera_mora' => round((float) $rows->where('tipo', self::TIPO_PASE_MORA)->sum('monto'), 2),
-            'cancelacion_credito_vehicular' => round((float) $rows->where('tipo', self::TIPO_CANCELACION_VEHICULAR)->sum('monto'), 2),
             'eventos' => $rows->map(fn (IndicadorOperativoEvento $row) => [
                 'id' => $row->id,
                 'fecha' => $row->fecha?->toDateString(),
