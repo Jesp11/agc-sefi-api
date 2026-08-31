@@ -9,6 +9,8 @@ use Illuminate\Support\Facades\DB;
 
 class AhorroPersonalService
 {
+    public function __construct(private AsesorService $asesorService) {}
+
     private function ensureAhorrosForAsesores(): void
     {
         foreach (Asesor::pluck('id') as $asesorId) {
@@ -132,14 +134,24 @@ class AhorroPersonalService
         DB::transaction(function () use ($anio, $filas, $reemplazar, $meses, &$creados, &$errores) {
             foreach ($filas as $idx => $fila) {
                 $codigo = trim((string) ($fila['codigo'] ?? ''));
-                if ($codigo === '') {
-                    $errores[] = ['fila' => $idx + 1, 'mensaje' => 'Fila sin ID de asesor'];
+                $nombre = trim((string) ($fila['nombre'] ?? ''));
+                if ($codigo === '' && $nombre === '') {
+                    $errores[] = ['fila' => $idx + 1, 'mensaje' => 'Fila sin ID ni nombre de asesor'];
                     continue;
                 }
 
-                $asesor = Asesor::where('id_asesor', $codigo)->first();
+                $asesor = null;
+                if ($codigo !== '') {
+                    $asesor = Asesor::where('id_asesor', $codigo)->first();
+                }
+                if (! $asesor && $nombre !== '') {
+                    $asesor = $this->asesorService->resolveExistingFromImport([
+                        'nombre_asesor' => $nombre,
+                    ]);
+                }
                 if (!$asesor) {
-                    $errores[] = ['fila' => $idx + 1, 'mensaje' => "Asesor no encontrado: {$codigo}"];
+                    $referencia = $codigo !== '' ? $codigo : $nombre;
+                    $errores[] = ['fila' => $idx + 1, 'mensaje' => "Asesor no encontrado: {$referencia}"];
                     continue;
                 }
 
@@ -167,7 +179,7 @@ class AhorroPersonalService
                     if ($tipo === 'Retiro' && $ahorro->saldo < $abs) {
                         $errores[] = [
                             'fila' => $idx + 1,
-                            'mensaje' => "Saldo insuficiente para retiro ({$codigo}, {$mes})",
+                            'mensaje' => "Saldo insuficiente para retiro ({$asesor->id_asesor}, {$mes})",
                         ];
                         continue;
                     }

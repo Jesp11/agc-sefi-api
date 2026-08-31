@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Services\FlujoCajaService;
+use App\Services\FlujoCajaImportService;
 use Illuminate\Http\Request;
 
 class FlujoCajaController extends Controller
@@ -52,5 +53,35 @@ class FlujoCajaController extends Controller
     public function cuentas()
     {
         return response()->json(['cuentas' => FlujoCajaService::CUENTAS]);
+    }
+
+    public function import(Request $request, FlujoCajaImportService $service)
+    {
+        $data = $request->validate([
+            'anio' => 'required|integer|min:2000|max:2100',
+            'mes' => 'required|integer|min:1|max:12',
+            'rows' => 'required|array|min:1',
+            'rows.*.fecha' => 'required|date',
+            'rows.*.vendedor' => 'nullable|string',
+            'rows.*.motivo' => 'required|string|max:500',
+            'rows.*.desembolso' => 'nullable|numeric',
+            'rows.*.ingreso' => 'nullable|numeric',
+            'rows.*.saldo_excel' => 'nullable|numeric',
+            'rows.*.sheet_name' => 'required|string|max:100',
+            'rows.*.row_number' => 'required|integer|min:1',
+            'reemplazar' => 'boolean',
+        ]);
+
+        $result = $service->importar(
+            (int) $data['anio'],
+            (int) $data['mes'],
+            $data['rows'],
+            $data['reemplazar'] ?? true
+        );
+
+        return response()->json([
+            'message' => "Importación completada: {$result['created']} movimiento(s) creados.",
+            ...$result,
+        ], empty($result['errors']) ? 200 : 207);
     }
 }

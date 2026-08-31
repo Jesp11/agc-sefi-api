@@ -10,6 +10,54 @@ use InvalidArgumentException;
 
 class AsesorService
 {
+    public function resolveExistingFromImport(array $data): ?Asesor
+    {
+        $curp = isset($data['curp']) ? strtoupper(trim((string) $data['curp'])) : null;
+        if ($curp) {
+            $byCurp = Asesor::where('curp', $curp)->first();
+            if ($byCurp) {
+                return $byCurp;
+            }
+        }
+
+        $nombre = trim((string) ($data['nombre_asesor'] ?? ''));
+        if ($nombre === '') {
+            return null;
+        }
+
+        $normalized = $this->normalizePersonName($nombre);
+        $exact = Asesor::all()->first(function (Asesor $asesor) use ($normalized) {
+            return $this->normalizePersonName($asesor->nombre_asesor) === $normalized;
+        });
+        if ($exact) {
+            return $exact;
+        }
+
+        $asesores = Asesor::all(['id', 'nombre_asesor', 'curp', 'telefono', 'rol_laboral']);
+        $matches = $asesores->filter(function (Asesor $asesor) use ($normalized) {
+            return $this->nameContainsAllTokens($normalized, $this->normalizePersonName($asesor->nombre_asesor));
+        })->values();
+
+        if ($matches->count() === 1) {
+            return $matches->first();
+        }
+
+        $tokens = $this->tokensFromName($normalized);
+        if (count($tokens) === 1) {
+            $single = $tokens[0];
+            $prefixMatches = $asesores->filter(function (Asesor $asesor) use ($single) {
+                $candidate = $this->normalizePersonName($asesor->nombre_asesor);
+                return $candidate === $single || str_starts_with($candidate, $single . ' ');
+            })->values();
+
+            if ($prefixMatches->count() === 1) {
+                return $prefixMatches->first();
+            }
+        }
+
+        return null;
+    }
+
     public function getPrefixByRole(?string $rolLaboral): string
     {
         if (empty($rolLaboral)) {
@@ -83,10 +131,14 @@ class AsesorService
     public function upsertFromImport(array $data): array
     {
         $curp = strtoupper($data['curp']);
-        $asesor = Asesor::where('curp', $curp)->first();
+        $asesor = $this->resolveExistingFromImport($data);
+        $nombreImportado = trim((string) $data['nombre_asesor']);
+        $nombreFinal = $asesor
+            ? $this->pickPreferredName($asesor->nombre_asesor, $nombreImportado)
+            : $nombreImportado;
 
         $payload = [
-            'nombre_asesor' => $data['nombre_asesor'],
+            'nombre_asesor' => $nombreFinal,
             'cumpleanos' => $this->cumpleanosFromCurp($curp),
             'rol_laboral' => $data['rol_laboral'] ?? 'Gestor de Cobranza',
         ];
@@ -118,6 +170,59 @@ class AsesorService
         }
 
         return ['asesor' => $savedAsesor->fresh(['user']), 'action' => $action];
+    }
+
+    private function pickPreferredName(string $existingName, string $importedName): string
+    {
+        $existing = trim($existingName);
+        $imported = trim($importedName);
+        if ($existing === '') {
+            return $imported;
+        }
+        if ($imported === '') {
+            return $existing;
+        }
+
+        $existingNormalized = $this->normalizePersonName($existing);
+        $importedNormalized = $this->normalizePersonName($imported);
+
+        if (
+            $existingNormalized !== $importedNormalized
+            && $this->nameContainsAllTokens($importedNormalized, $existingNormalized)
+            && count($this->tokensFromName($existingNormalized)) >= count($this->tokensFromName($importedNormalized))
+        ) {
+            return $existing;
+        }
+
+        return mb_strlen($imported) > mb_strlen($existing) ? $imported : $existing;
+    }
+
+    private function normalizePersonName(string $value): string
+    {
+        $value = mb_strtoupper(trim($value), 'UTF-8');
+        $transliterated = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value);
+        $value = $transliterated !== false ? $transliterated : $value;
+        $value = preg_replace('/\s+/', ' ', $value) ?? $value;
+
+        return trim($value);
+    }
+
+    private function tokensFromName(string $value): array
+    {
+        return array_values(array_filter(explode(' ', $value)));
+    }
+
+    private function nameContainsAllTokens(string $lookup, string $candidate): bool
+    {
+        $tokens = $this->tokensFromName($lookup);
+        $candidateTokens = $this->tokensFromName($candidate);
+        foreach ($tokens as $token) {
+            if (! in_array($token, $candidateTokens, true)) {
+                return false;
+            }
+        }
+
+        return $tokens !== [];
     }
 
     public function resolveRoleForLaboral(?string $rolLaboral): Role

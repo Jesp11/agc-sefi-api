@@ -8,6 +8,32 @@ use Carbon\Carbon;
 
 class MoraCalculationService
 {
+    private function resolveImportedSaldo(Credito $credito): ?float
+    {
+        $saldo = $credito->saldo_pendiente;
+        if ($saldo === null) {
+            return null;
+        }
+
+        $tabla = $credito->tabla_amortizacion;
+        if (!is_array($tabla) || $tabla === []) {
+            return null;
+        }
+
+        foreach ($tabla as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            $importRef = $item['import_ref'] ?? null;
+            if (is_string($importRef) && str_starts_with($importRef, 'EXCEL-')) {
+                return round((float) $saldo, 2);
+            }
+        }
+
+        return null;
+    }
+
     public function generateSchedule(Credito $credito): array
     {
         if (!$credito->fecha_primer_pago || !$credito->plazos || !$credito->valor_ficha) {
@@ -41,7 +67,14 @@ class MoraCalculationService
         // Solo abonos liquidan el préstamo. Las multas van al asesor y no afectan el saldo.
         $totalAbonado = (float) $abonos->sum('monto');
         $totalMultas = (float) $multas->sum('monto');
-        $saldoPendiente = max(0, (float) $credito->total - $totalAbonado);
+        $saldoImportado = $this->resolveImportedSaldo($credito);
+
+        if ($abonos->isEmpty() && $saldoImportado !== null) {
+            $saldoPendiente = max(0, $saldoImportado);
+            $totalAbonado = max(0, round((float) $credito->total - $saldoPendiente, 2));
+        } else {
+            $saldoPendiente = max(0, (float) $credito->total - $totalAbonado);
+        }
 
         $ultimoAbono = $abonos
             ->sort(function ($a, $b) {

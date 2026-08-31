@@ -60,7 +60,30 @@ class ReportService
 
         // Obtener cobranza programada (cuotas del día + atrasados) según día de la semana / amortización
         $cobrosDelDiaData = app(CarteraService::class)->cobrosDelDia($fecha, $idAsesor);
-        $cobrosProgramados = collect($cobrosDelDiaData['cobros'] ?? []);
+        $cobrosProgramados = collect($cobrosDelDiaData['cobros'] ?? [])
+            ->filter(fn ($cobro) => ($cobro['estado'] ?? null) !== 'EnMora')
+            ->filter(fn ($cobro) => ($cobro['categoria'] ?? null) !== 'atrasado')
+            ->values();
+
+        $creditosEnMora = collect($cobrosDelDiaData['cobros'] ?? [])
+            ->filter(fn ($cobro) => ($cobro['estado'] ?? null) === 'EnMora')
+            ->pluck('num_prog')
+            ->filter()
+            ->unique()
+            ->all();
+
+        $pagos = $pagos->filter(function ($pago) use ($creditosEnMora) {
+            $credito = $pago->credito;
+            if (! $credito) {
+                return false;
+            }
+
+            if ($credito->estado === 'EnMora') {
+                return false;
+            }
+
+            return ! in_array($credito->num_prog, $creditosEnMora, true);
+        })->values();
 
         $totalAbonosRegistrados = round((float) $pagos->where('tipo', 'Abono')->sum('monto'), 2);
         $montoColocado = round((float) $creditos->sum('monto_otorgado'), 2);
@@ -282,17 +305,12 @@ class ReportService
         if ($tipo === 'mora-activa') {
             $query->where('estado', 'EnMora')
                 ->where(function ($q) {
-                    $q->whereIn('num_prog', [123, 124, 125, 126, 127])
-                        ->orWhere(function ($m) {
-                            $m->where('num_prog', '>=', 123)
-                                ->where('tipo_credito', 'Individual')
-                                ->where('tabla_amortizacion', 'not like', '%"mora_clasificacion": "mora_muerta"%');
-                        });
+                    $q->where('tabla_amortizacion', 'not like', '%"mora_clasificacion": "mora_muerta"%')
+                        ->orWhereNull('tabla_amortizacion');
                 });
         } else {
             $query->where(function ($q) {
-                $q->whereIn('num_prog', [107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 128, 129, 130, 131])
-                    ->orWhere(function ($closed) {
+                $q->where(function ($closed) {
                         $closed->whereIn('estado', ['CerradoSinRenovacion', 'Finalizado'])
                             ->where(function ($history) {
                                 $history->whereNotNull('ciclo_inicio_mora')
@@ -309,47 +327,10 @@ class ReportService
             $query->where('id_asesor', $idAsesor);
         }
 
-        $moraInversionMap = [
-            // Mora Activa
-            123 => -2059.0, // MARIA DE LOS ANGELES TAVERA MORENO
-            124 => 970.0,   // HECTOR ADAN HERNANDEZ GONZALEZ
-            125 => 1500.0,  // NORMA CRUZ GUEVARA
-            126 => 0.0,     // GABRIELA ROCIO SANCHEZ WHITAKER
-            127 => 8900.0,  // LUCIA MILAGRO CRUZ DE LA TORRE
-            // Mora Muerta Individual
-            107 => 1696.0,  // GUADALUPE GUERRERO GARCIA
-            108 => 2516.0,  // KAREN GUADALUPE GUERRERO GARCIA
-            109 => 1548.0,  // MARCO ANTONIO VILLEGAS VIÑAS
-            110 => 4944.0,  // ALEJANDRA MICHELLE PEREZ RAMIREZ
-            111 => 744.0,   // ROSA NELY GONZALEZ AGUIRRE
-            112 => 4944.0,  // AMANDA RAMIREZ MIRELES
-            113 => 6144.0,  // BEATRIZ HERNANDEZ ALEJANDRE
-            114 => 8359.0,  // MARIA DE JESUS ORTIZ TREJO
-            115 => 7204.0,  // JORGE FERNANDO HERNANDEZ ALEJANDRE
-            116 => -48.0,   // GUADALUPE NARCISA MORENO MONTOYA
-            117 => 2692.0,  // JAEL ARELY PEREZ CRUZ
-            118 => 2500.0,  // MODESTO TREJO REQUENA
-            119 => 2500.0,  // BRENDA CAROLINA RODRIGUEZ RAMOS
-            120 => -1540.0, // NALLELY TREJO REQUENA
-            121 => 1907.0,  // MARCO ALBERTO BAEZ RIOS
-            122 => 6426.0,  // DORA ALICIA BERNAL LEAL
-            // Mora Muerta Grupal
-            128 => 0.0,     // KIJO
-            129 => 0.0,     // JARDINES DE MIRAMAR
-            130 => 958.0,   // LA CURVA
-            131 => 0.0,     // CAMILA
-        ];
-
-        $creditos = $query->get()->map(function ($credito) use ($tipo, $moraInversionMap) {
+        $creditos = $query->get()->map(function ($credito) use ($tipo) {
             $mora = $this->moraService->calculate($credito);
             $saldoActual = round((float) ($mora['saldo_actual'] ?? $credito->saldo_pendiente ?? $credito->total), 2);
-            $numProg = (int) $credito->num_prog;
-
-            if (isset($moraInversionMap[$numProg])) {
-                $saldoInversion = $moraInversionMap[$numProg];
-            } else {
-                $saldoInversion = round($saldoActual - (float) ($credito->interes ?? 0), 2);
-            }
+            $saldoInversion = $this->resolveSaldoInversion($credito, $saldoActual);
 
             $mora['saldo_inversion'] = $saldoInversion;
 
@@ -361,6 +342,31 @@ class ReportService
         });
 
         return ['creditos' => $creditos->values(), 'total' => $creditos->count()];
+    }
+
+    private function resolveSaldoInversion(Credito $credito, float $saldoActual): float
+    {
+        $tabla = $credito->tabla_amortizacion;
+        if (is_array($tabla) && $tabla !== []) {
+            if (array_key_exists('saldo_inversion_importado', $tabla)) {
+                return round((float) $tabla['saldo_inversion_importado'], 2);
+            }
+            if (array_key_exists('saldo_inversion_grupal', $tabla)) {
+                return round((float) $tabla['saldo_inversion_grupal'], 2);
+            }
+
+            $first = $tabla[0] ?? null;
+            if (is_array($first)) {
+                if (array_key_exists('saldo_inversion_importado', $first)) {
+                    return round((float) $first['saldo_inversion_importado'], 2);
+                }
+                if (array_key_exists('saldo_inversion_grupal', $first)) {
+                    return round((float) $first['saldo_inversion_grupal'], 2);
+                }
+            }
+        }
+
+        return round($saldoActual - (float) ($credito->interes ?? 0), 2);
     }
 
     public function clientesPorCerrar(?int $idAsesor = null): array

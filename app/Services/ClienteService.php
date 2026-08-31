@@ -119,8 +119,54 @@ class ClienteService
 
         $nombre = trim($row['nombre_asesor']);
         $asesor = Asesor::whereRaw('UPPER(nombre_asesor) = ?', [strtoupper($nombre)])->first();
+        if ($asesor) {
+            return $asesor->id;
+        }
 
-        return $asesor?->id;
+        $lookup = $this->normalizePersonName($nombre);
+        $tokens = array_values(array_filter(explode(' ', $lookup)));
+        if (empty($tokens)) {
+            return null;
+        }
+
+        $candidatos = Asesor::query()->get(['id', 'nombre_asesor']);
+        $matches = $candidatos->filter(function (Asesor $item) use ($tokens) {
+            $normalized = $this->normalizePersonName($item->nombre_asesor);
+            $parts = array_values(array_filter(explode(' ', $normalized)));
+            foreach ($tokens as $token) {
+                if (! in_array($token, $parts, true)) {
+                    return false;
+                }
+            }
+            return true;
+        })->values();
+
+        if ($matches->count() === 1) {
+            return $matches->first()->id;
+        }
+
+        if (count($tokens) === 1) {
+            $single = $tokens[0];
+            $prefixMatches = $candidatos->filter(function (Asesor $item) use ($single) {
+                $normalized = $this->normalizePersonName($item->nombre_asesor);
+                return $normalized === $single || str_starts_with($normalized, $single . ' ');
+            })->values();
+
+            if ($prefixMatches->count() === 1) {
+                return $prefixMatches->first()->id;
+            }
+        }
+
+        return null;
+    }
+
+    private function normalizePersonName(string $value): string
+    {
+        $value = strtoupper(trim($value));
+        $value = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value) ?: $value;
+        $value = preg_replace('/\s+/', ' ', $value) ?? $value;
+
+        return trim($value);
     }
 
     public function resolveGrupoId(array $row): ?int

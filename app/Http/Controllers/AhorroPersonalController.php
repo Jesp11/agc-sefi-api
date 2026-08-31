@@ -55,7 +55,8 @@ class AhorroPersonalController extends Controller
         $data = $request->validate([
             'anio' => 'required|integer|min:2000|max:2100',
             'filas' => 'required|array|min:1',
-            'filas.*.codigo' => 'required|string',
+            'filas.*.codigo' => 'nullable|string',
+            'filas.*.nombre' => 'nullable|string',
             'filas.*.meses' => 'required|array',
             'reemplazar' => 'boolean',
         ]);

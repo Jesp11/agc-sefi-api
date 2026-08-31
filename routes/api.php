@@ -29,6 +29,7 @@ use App\Http\Controllers\SocioController;
 use App\Http\Controllers\AhorroSocioController;
 use App\Http\Controllers\ReporteController;
 use App\Http\Controllers\BusquedaGlobalController;
+use App\Http\Controllers\ExcelImportController;
 
 Route::group([
     'middleware' => 'api',
@@ -80,6 +81,12 @@ Route::middleware('auth:api')->group(function () {
     Route::get('cartera/mora', [CarteraController::class, 'mora']);
     Route::get('cartera/mora-activa', [CarteraController::class, 'moraActiva']);
     Route::get('cartera/mora-muerta', [CarteraController::class, 'moraMuerta']);
+    Route::post('cartera/import/individual', [ExcelImportController::class, 'importarCarteraIndividual'])
+        ->middleware('role:admin');
+    Route::post('cartera/import/grupal', [ExcelImportController::class, 'importarCarteraGrupal'])
+        ->middleware('role:admin');
+    Route::post('cartera/import/mora', [ExcelImportController::class, 'importarCarteraMora'])
+        ->middleware('role:admin');
     Route::get('cartera/cerrados', [CarteraController::class, 'cerrados']);
     Route::get('cartera/cobros-del-dia', [CarteraController::class, 'cobrosDelDia']);
     // Asesor y admin: mover a mora o cerrar sin renovación
@@ -107,6 +114,8 @@ Route::middleware('auth:api')->group(function () {
 
     // Contabilidad
     Route::get('inversionistas', [InversionistaController::class, 'index']);
+    Route::post('inversionistas/import', [InversionistaController::class, 'import'])
+        ->middleware('role:admin');
     Route::post('inversionistas', [InversionistaController::class, 'store']);
     Route::put('inversionistas/{id}', [InversionistaController::class, 'update']);
     Route::post('inversionistas/{id}/aportaciones', [InversionistaController::class, 'aportacion']);
@@ -120,6 +129,8 @@ Route::middleware('auth:api')->group(function () {
     Route::get('flujo-caja', [FlujoCajaController::class, 'index']);
     Route::get('flujo-caja/resumen', [FlujoCajaController::class, 'resumen']);
     Route::get('flujo-caja/cuentas', [FlujoCajaController::class, 'cuentas']);
+    Route::post('flujo-caja/import', [FlujoCajaController::class, 'import'])
+        ->middleware('role:admin');
     Route::post('flujo-caja', [FlujoCajaController::class, 'store']);
     Route::get('empleados', [EmpleadoController::class, 'index']);
     Route::post('empleados', [EmpleadoController::class, 'store']);

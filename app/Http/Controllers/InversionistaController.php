@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Inversionista;
 use App\Services\CapitalService;
+use App\Services\InversionistaImportService;
 use Illuminate\Http\Request;
 
 class InversionistaController extends Controller
@@ -109,5 +110,25 @@ class InversionistaController extends Controller
             'message' => 'Pago de rendimiento registrado exitosamente',
             'data' => $aportacion,
         ], 201);
+    }
+
+    public function import(Request $request, InversionistaImportService $service)
+    {
+        $data = $request->validate([
+            'rows' => 'required|array|min:1',
+            'rows.*.nombre' => 'required|string|max:255',
+            'rows.*.inversion_inicial' => 'nullable|numeric',
+            'rows.*.total_excel' => 'nullable|numeric',
+            'rows.*.rendimientos' => 'array',
+            'rows.*.rendimientos.*.fecha' => 'required|date',
+            'rows.*.rendimientos.*.monto' => 'required|numeric',
+        ]);
+
+        $result = $service->importar($data['rows']);
+
+        return response()->json([
+            'message' => "Importación completada: {$result['created']} creado(s), {$result['updated']} actualizado(s).",
+            ...$result,
+        ], empty($result['errors']) ? 200 : 207);
     }
 }
