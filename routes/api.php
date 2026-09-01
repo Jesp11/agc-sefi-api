@@ -162,6 +162,7 @@ Route::middleware('auth:api')->group(function () {
     Route::get('reportes/asesor/diario', [ReporteController::class, 'asesorDiario']);
     Route::get('reportes/asesor/mora', [ReporteController::class, 'asesorMora']);
     Route::get('reportes/asesor/por-cerrar', [ReporteController::class, 'asesorPorCerrar']);
+    Route::patch('reportes/asesor/por-cerrar/{num_prog}', [ReporteController::class, 'actualizarRenovacion']);
     Route::get('reportes/semanal', [ReporteController::class, 'semanal']);
     Route::get('reportes/inversionistas', [ReporteController::class, 'inversionistas']);
     Route::get('reportes/cierre-mensual', [ReporteController::class, 'cierreMensual']);

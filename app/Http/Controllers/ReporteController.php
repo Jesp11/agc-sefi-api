@@ -85,6 +85,23 @@ class ReporteController extends Controller
         ));
     }
 
+    public function actualizarRenovacion(Request $request, $num_prog)
+    {
+        $data = $request->validate([
+            'fecha_programada_renovacion' => 'nullable|date',
+            'renovacion_autorizada' => 'nullable|string|max:50',
+            'renovacion_tasa' => 'nullable|string|max:50',
+        ]);
+
+        $credito = \App\Models\Credito::findOrFail($num_prog);
+        $credito->update($data);
+
+        return response()->json([
+            'message' => 'Renovación actualizada correctamente',
+            'credito' => $credito,
+        ]);
+    }
+
     public function inversionistas()
     {
         return response()->json($this->reportService->reporteInversionistas());

@@ -421,6 +421,7 @@ class ReportService
             }
 
             $fecha = Carbon::parse($fechaUltimoAbono);
+            $fechaTermino = !empty($schedule) ? end($schedule)['fecha'] : null;
             $data = $credito->toArray();
             unset($data['pagos']);
 
@@ -428,6 +429,10 @@ class ReportService
                 'saldo_actual' => round($saldo, 2),
                 'monto_ultimo_abono' => round(min($saldo, $valorFicha), 2),
                 'fecha_ultimo_abono' => $fecha->format('Y-m-d'),
+                'fecha_termino' => $fechaTermino,
+                'fecha_programada_renovacion' => $credito->fecha_programada_renovacion,
+                'renovacion_autorizada' => $credito->renovacion_autorizada ?? 'Pendiente',
+                'renovacion_tasa' => $credito->renovacion_tasa ?? '',
                 'dias_restantes' => (int) $hoy->diffInDays($fecha, false),
                 'pago_semanal' => $valorFicha,
                 'plazos' => $plazos,
@@ -435,7 +440,13 @@ class ReportService
             ]);
         }
 
-        usort($result, fn ($a, $b) => strcmp($a['fecha_ultimo_abono'], $b['fecha_ultimo_abono']));
+        usort($result, function ($a, $b) {
+            $cmp = ($a['pagos_restantes'] ?? 0) <=> ($b['pagos_restantes'] ?? 0);
+            if ($cmp !== 0) {
+                return $cmp;
+            }
+            return strcmp($a['fecha_termino'] ?? '', $b['fecha_termino'] ?? '');
+        });
 
         return $result;
     }

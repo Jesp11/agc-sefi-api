@@ -40,6 +40,9 @@ class Credito extends Model
         'dias_mora_cache',
         'ubicacion_expediente',
         'notas_expediente',
+        'fecha_programada_renovacion',
+        'renovacion_autorizada',
+        'renovacion_tasa',
     ];
 
     protected $casts = [
