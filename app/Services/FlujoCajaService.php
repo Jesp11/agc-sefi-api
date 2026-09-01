@@ -281,11 +281,11 @@ class FlujoCajaService
             ->map(fn ($items) => round((float) $items->sum('monto'), 2));
 
         $carteraIndividual = Credito::where('tipo_credito', 'Individual')
-            ->whereIn('estado', ['Activo', 'EnMora'])
+            ->where('estado', 'Activo')
             ->sum('saldo_pendiente');
 
         $carteraGrupal = Credito::where('tipo_credito', 'Grupal')
-            ->whereIn('estado', ['Activo', 'EnMora'])
+            ->where('estado', 'Activo')
             ->sum('saldo_pendiente');
 
         $mora = Credito::where('estado', 'EnMora')->sum('saldo_pendiente');

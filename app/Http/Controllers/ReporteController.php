@@ -234,4 +234,17 @@ class ReporteController extends Controller
             $this->scopedAsesorId($request)
         ));
     }
+
+    public function cumpleanos(Request $request)
+    {
+        $mes = (int) $request->query('mes', date('n'));
+        if ($mes < 1 || $mes > 12) {
+            $mes = (int) date('n');
+        }
+
+        return response()->json($this->reportService->reporteCumpleanos(
+            $mes,
+            $this->scopedAsesorId($request)
+        ));
+    }
 }

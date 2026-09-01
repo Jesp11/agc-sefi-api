@@ -8,6 +8,7 @@ use App\Models\AhorroSocio;
 use App\Models\Aportacion;
 use App\Models\Asesor;
 use App\Models\CierreMensualManual;
+use App\Models\Cliente;
 use App\Models\ConfiguracionSistema;
 use App\Models\Credito;
 use App\Models\GastoOperativo;
@@ -42,10 +43,12 @@ class ReportService
         $fecha = $fecha ?? now()->toDateString();
 
         $pagosQuery = Pago::with(['credito.cliente', 'credito.grupo', 'credito.asesor'])
-            ->whereDate('fecha', $fecha);
+            ->whereDate('fecha', $fecha)
+            ->whereHas('credito', fn ($q) => $q->where('estado', 'Activo'));
 
         $creditosQuery = Credito::with(['cliente', 'grupo', 'asesor'])
-            ->whereDate('fecha_otorgacion', $fecha);
+            ->whereDate('fecha_otorgacion', $fecha)
+            ->where('estado', 'Activo');
 
         if ($idAsesor) {
             $pagosQuery->whereHas('credito', fn ($q) => $q->where('id_asesor', $idAsesor));
@@ -1984,5 +1987,138 @@ class ReportService
 
             return false;
         })->values();
+    }
+
+    public function reporteCumpleanos(int $mes, ?int $idAsesor = null): array
+    {
+        $mesesNombres = [
+            1 => 'Enero', 2 => 'Febrero', 3 => 'Marzo', 4 => 'Abril',
+            5 => 'Mayo', 6 => 'Junio', 7 => 'Julio', 8 => 'Agosto',
+            9 => 'Septiembre', 10 => 'Octubre', 11 => 'Noviembre', 12 => 'Diciembre'
+        ];
+
+        $currentYear = (int) date('Y');
+        $currentMonth = (int) date('n');
+        $currentDay = (int) date('j');
+
+        $query = Cliente::with([
+            'asesor:id,nombre_asesor',
+            'creditos' => function ($q) {
+                $q->select('num_prog', 'id_cliente', 'tipo_credito', 'monto_otorgado', 'saldo_pendiente', 'total', 'estado')
+                  ->where('estado', 'Activo');
+            },
+            'grupos:id,nombre_grupo'
+        ]);
+
+        if ($idAsesor) {
+            $query->where(function ($q) use ($idAsesor) {
+                $q->where('id_asesor', $idAsesor)
+                  ->orWhereHas('creditos', function ($cq) use ($idAsesor) {
+                      $cq->where('id_asesor', $idAsesor);
+                  });
+            });
+        }
+
+        $allClientes = $query->get();
+
+        $cumpleaneros = [];
+        $cumplenHoy = 0;
+        $porCumplir = 0;
+        $cumplidos = 0;
+
+        foreach ($allClientes as $cliente) {
+            $dia = null;
+            $mesCliente = null;
+            $anioNac = null;
+
+            // 1. Intentar desde fecha_nacimiento
+            if (!empty($cliente->fecha_nacimiento)) {
+                $fechaStr = (string) $cliente->fecha_nacimiento;
+                if (preg_match('/^(\d{4})-(\d{2})-(\d{2})/', $fechaStr, $matches)) {
+                    $anioNac = (int) $matches[1];
+                    $mesCliente = (int) $matches[2];
+                    $dia = (int) $matches[3];
+                }
+            }
+
+            // 2. Si no, intentar extraer de la CURP (posiciones 4-9: AAMMDD)
+            if ((!$mesCliente || !$dia) && !empty($cliente->curp) && strlen(trim($cliente->curp)) >= 10) {
+                $curp = strtoupper(trim($cliente->curp));
+                $aa = substr($curp, 4, 2);
+                $mm = substr($curp, 6, 2);
+                $dd = substr($curp, 8, 2);
+
+                if (is_numeric($aa) && is_numeric($mm) && is_numeric($dd)) {
+                    $mesInt = (int) $mm;
+                    $diaInt = (int) $dd;
+                    if ($mesInt >= 1 && $mesInt <= 12 && $diaInt >= 1 && $diaInt <= 31) {
+                        $mesCliente = $mesInt;
+                        $dia = $diaInt;
+                        $anio2Digitos = (int) $aa;
+                        $anioNac = ($anio2Digitos > (int) date('y')) ? 1900 + $anio2Digitos : 2000 + $anio2Digitos;
+                    }
+                }
+            }
+
+            // Si coincide con el mes solicitado
+            if ($mesCliente === $mes && $dia !== null) {
+                $edad = $anioNac ? ($currentYear - $anioNac) : null;
+                $esHoy = ($mes === $currentMonth && $dia === $currentDay);
+                $yaPaso = ($mes < $currentMonth) || ($mes === $currentMonth && $dia < $currentDay);
+
+                if ($mes === $currentMonth) {
+                    if ($esHoy) {
+                        $cumplenHoy++;
+                    } elseif ($dia < $currentDay) {
+                        $cumplidos++;
+                    } else {
+                        $porCumplir++;
+                    }
+                }
+
+                $creditoActivo = $cliente->creditos->first();
+
+                $cumpleaneros[] = [
+                    'id_cliente' => $cliente->id_cliente,
+                    'nombre_completo' => $cliente->nombre_completo,
+                    'telefono' => $cliente->telefono ?? '',
+                    'curp' => $cliente->curp ?? '',
+                    'dia' => $dia,
+                    'mes' => $mes,
+                    'anio_nacimiento' => $anioNac,
+                    'fecha_nacimiento' => $anioNac ? sprintf('%04d-%02d-%02d', $anioNac, $mes, $dia) : null,
+                    'edad' => $edad,
+                    'es_hoy' => $esHoy,
+                    'ya_paso' => $yaPaso,
+                    'dias_restantes' => ($mes === $currentMonth && $dia >= $currentDay) ? ($dia - $currentDay) : null,
+                    'asesor' => $cliente->asesor ? [
+                        'id' => $cliente->asesor->id,
+                        'nombre_asesor' => $cliente->asesor->nombre_asesor,
+                    ] : null,
+                    'grupo' => $cliente->grupos->first()?->nombre_grupo ?? null,
+                    'estatus_cliente' => $cliente->estatus ?? 'Activo',
+                    'tiene_credito_activo' => $creditoActivo !== null,
+                    'credito_activo' => $creditoActivo ? [
+                        'num_prog' => $creditoActivo->num_prog,
+                        'tipo' => $creditoActivo->tipo_credito,
+                        'saldo_pendiente' => (float) ($creditoActivo->saldo_pendiente ?? $creditoActivo->total ?? 0),
+                    ] : null,
+                ];
+            }
+        }
+
+        // Ordenar por día ascendente
+        usort($cumpleaneros, fn ($a, $b) => $a['dia'] - $b['dia']);
+
+        return [
+            'mes' => $mes,
+            'nombre_mes' => $mesesNombres[$mes] ?? '',
+            'anio' => $currentYear,
+            'total_cumpleaneros' => count($cumpleaneros),
+            'cumplen_hoy' => $cumplenHoy,
+            'por_cumplir' => $porCumplir,
+            'cumplidos' => $cumplidos,
+            'clientes' => $cumpleaneros,
+        ];
     }
 }

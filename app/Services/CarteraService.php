@@ -37,7 +37,7 @@ class CarteraService
         $diaSemana = self::DIAS_SEMANA[$fechaRef->dayOfWeek];
 
         $query = Credito::with(['cliente', 'grupo', 'asesor', 'pagos'])
-            ->whereIn('estado', ['Activo', 'EnMora']);
+            ->where('estado', 'Activo');
 
         if ($idAsesor) {
             $query->where('id_asesor', $idAsesor);
@@ -62,8 +62,11 @@ class CarteraService
 
         $pagosDelDia = Pago::query()
             ->whereDate('fecha', $fechaRef->toDateString())
-            ->when($idAsesor, function ($q) use ($idAsesor) {
-                $q->whereHas('credito', fn ($c) => $c->where('id_asesor', $idAsesor));
+            ->whereHas('credito', function ($q) use ($idAsesor) {
+                $q->where('estado', 'Activo');
+                if ($idAsesor) {
+                    $q->where('id_asesor', $idAsesor);
+                }
             })
             ->get();
 
@@ -86,6 +89,10 @@ class CarteraService
 
     private function buildCobroItem(Credito $credito, Carbon $fechaRef, string $diaSemana): ?array
     {
+        if ($credito->estado !== 'Activo') {
+            return null;
+        }
+
         $schedule = $this->moraService->generateSchedule($credito);
         if ($schedule === []) {
             return null;

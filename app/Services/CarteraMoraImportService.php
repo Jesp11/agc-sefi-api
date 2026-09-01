@@ -247,16 +247,75 @@ class CarteraMoraImportService
         $nombre = $this->normalizeName((string) ($row['cliente'] ?? ''));
         $inputId = $this->normalizeClientCode((string) ($row['id_cliente'] ?? ''));
 
-        $existingByName = Cliente::query()->get()->first(function (Cliente $cliente) use ($nombre) {
+        $inputCurp = $this->normalizeClientCode((string) ($row['curp'] ?? ''));
+        if ($inputCurp !== '' && strlen($inputCurp) > 18) {
+            $inputCurp = substr($inputCurp, 0, 18);
+        }
+        $claveElector = trim((string) ($row['clave_elector'] ?? ''));
+        $telefono = $this->normalizePhone((string) ($row['telefono'] ?? ''));
+        $direccion = trim((string) ($row['direccion'] ?? ''));
+        $entreCalles = trim((string) ($row['entre_calles'] ?? ''));
+        $ocupacion = trim((string) ($row['ocupacion'] ?? ''));
+        $direccionTrabajo = trim((string) ($row['direccion_trabajo'] ?? ''));
+        $telefonoTrabajo = $this->normalizePhone((string) ($row['telefono_trabajo'] ?? ''));
+
+        // 1. Check if client exists by CURP if valid
+        $existingByCurp = null;
+        if ($inputCurp !== '' && ! $this->isPlaceholder($inputCurp) && strlen($inputCurp) === 18) {
+            $existingByCurp = Cliente::query()->where('curp', $inputCurp)->first();
+        }
+
+        // 2. Check if client exists by name
+        $existingByName = $existingByCurp ?: Cliente::query()->get()->first(function (Cliente $cliente) use ($nombre) {
             return $this->normalizeName($cliente->nombre_completo) === $nombre;
         });
 
         if ($existingByName) {
-            if ($existingByName->id_asesor !== $asesorId || $existingByName->nombre_completo !== $nombre) {
-                $existingByName->update([
-                    'id_asesor' => $asesorId,
-                    'nombre_completo' => $nombre,
-                ]);
+            $updates = [];
+            if ($existingByName->id_asesor !== $asesorId) {
+                $updates['id_asesor'] = $asesorId;
+            }
+            if ($existingByName->nombre_completo !== $nombre) {
+                $updates['nombre_completo'] = $nombre;
+            }
+
+            if ($inputCurp !== '' && ($this->isPlaceholder($existingByName->curp) || str_starts_with($existingByName->curp, 'CL') || str_starts_with($existingByName->curp, 'II') || str_starts_with($existingByName->curp, 'IG'))) {
+                $updates['curp'] = $inputCurp;
+                $fnac = $this->fechaNacimientoFromCurp($inputCurp);
+                if ($fnac) {
+                    $updates['fecha_nacimiento'] = $fnac;
+                }
+            } elseif ($existingByName->curp && ($this->isPlaceholder($existingByName->fecha_nacimiento) || str_starts_with((string)$existingByName->fecha_nacimiento, '1990-01-01'))) {
+                $fnac = $this->fechaNacimientoFromCurp($existingByName->curp);
+                if ($fnac) {
+                    $updates['fecha_nacimiento'] = $fnac;
+                }
+            }
+
+            if ($claveElector !== '' && $this->isPlaceholder($existingByName->clave_elector)) {
+                $updates['clave_elector'] = $claveElector;
+            }
+            if ($telefono !== '' && $this->isPlaceholder($existingByName->telefono)) {
+                $updates['telefono'] = $telefono;
+            }
+            if ($direccion !== '' && $this->isPlaceholder($existingByName->direccion)) {
+                $updates['direccion'] = $direccion;
+            }
+            if ($entreCalles !== '' && $this->isPlaceholder($existingByName->entre_calles)) {
+                $updates['entre_calles'] = $entreCalles;
+            }
+            if ($ocupacion !== '' && $this->isPlaceholder($existingByName->ocupacion)) {
+                $updates['ocupacion'] = $ocupacion;
+            }
+            if ($direccionTrabajo !== '' && $this->isPlaceholder($existingByName->direccion_trabajo)) {
+                $updates['direccion_trabajo'] = $direccionTrabajo;
+            }
+            if ($telefonoTrabajo !== '' && $this->isPlaceholder($existingByName->telefono_trabajo)) {
+                $updates['telefono_trabajo'] = $telefonoTrabajo;
+            }
+
+            if (! empty($updates)) {
+                $existingByName->update($updates);
                 $stats['clientes_updated']++;
             }
 
@@ -267,33 +326,89 @@ class CarteraMoraImportService
         $cliente = Cliente::find($resolvedId);
 
         if ($cliente) {
-            $cliente->update([
+            $updates = [
                 'id_asesor' => $asesorId,
                 'nombre_completo' => $nombre,
-            ]);
+            ];
+            if ($inputCurp !== '' && ($this->isPlaceholder($cliente->curp) || str_starts_with($cliente->curp, 'CL'))) {
+                $updates['curp'] = $inputCurp;
+                $fnac = $this->fechaNacimientoFromCurp($inputCurp);
+                if ($fnac) $updates['fecha_nacimiento'] = $fnac;
+            }
+            if ($claveElector !== '' && $this->isPlaceholder($cliente->clave_elector)) $updates['clave_elector'] = $claveElector;
+            if ($telefono !== '' && $this->isPlaceholder($cliente->telefono)) $updates['telefono'] = $telefono;
+            if ($direccion !== '' && $this->isPlaceholder($cliente->direccion)) $updates['direccion'] = $direccion;
+            if ($entreCalles !== '' && $this->isPlaceholder($cliente->entre_calles)) $updates['entre_calles'] = $entreCalles;
+            if ($ocupacion !== '' && $this->isPlaceholder($cliente->ocupacion)) $updates['ocupacion'] = $ocupacion;
+            if ($direccionTrabajo !== '' && $this->isPlaceholder($cliente->direccion_trabajo)) $updates['direccion_trabajo'] = $direccionTrabajo;
+            if ($telefonoTrabajo !== '' && $this->isPlaceholder($cliente->telefono_trabajo)) $updates['telefono_trabajo'] = $telefonoTrabajo;
+
+            $cliente->update($updates);
             $stats['clientes_updated']++;
 
             return $cliente->fresh();
         }
 
+        // Generate or assign CURP
+        $curpToSave = $inputCurp;
+        if (empty($curpToSave) || strlen($curpToSave) !== 18 || Cliente::query()->where('curp', $curpToSave)->exists()) {
+            $curpToSave = $this->generateUniquePlaceholderCurp('CL', $resolvedId);
+        }
+
+        $fechaNacimiento = $this->fechaNacimientoFromCurp($curpToSave) ?: '1990-01-01';
+
         $cliente = Cliente::create([
             'id_cliente' => $resolvedId,
             'id_asesor' => $asesorId,
             'nombre_completo' => $nombre,
-            'curp' => $this->generateUniquePlaceholderCurp('CL', $resolvedId),
-            'clave_elector' => $this->normalizeClientCode((string) ($row['clave_elector'] ?? '')) ?: 'S/N',
-            'telefono' => 'S/N',
-            'direccion' => 'S/N',
-            'entre_calles' => 'S/N',
-            'ocupacion' => 'NO ESPECIFICADO',
-            'direccion_trabajo' => 'S/N',
-            'telefono_trabajo' => 'S/N',
-            'fecha_nacimiento' => '1990-01-01',
+            'curp' => $curpToSave,
+            'clave_elector' => $claveElector ?: 'S/N',
+            'telefono' => $telefono ?: 'S/N',
+            'direccion' => $direccion ?: 'S/N',
+            'entre_calles' => $entreCalles ?: 'S/N',
+            'ocupacion' => $ocupacion ?: 'NO ESPECIFICADO',
+            'direccion_trabajo' => $direccionTrabajo ?: 'S/N',
+            'telefono_trabajo' => $telefonoTrabajo ?: 'S/N',
+            'fecha_nacimiento' => $fechaNacimiento,
             'estatus' => 'Activo',
         ]);
         $stats['clientes_created']++;
 
         return $cliente;
+    }
+
+    private function isPlaceholder(?string $value): bool
+    {
+        if ($value === null) return true;
+        $val = strtoupper(trim($value));
+        return in_array($val, ['S/N', 'NO ESPECIFICADO', 'N/A', 'NA', '-', 'NONE', 'NULL', ''], true);
+    }
+
+    private function fechaNacimientoFromCurp(?string $curp): ?string
+    {
+        if (empty($curp)) return null;
+        $c = strtoupper(trim($curp));
+        if (preg_match('/^[A-Z]{4}(\d{2})(\d{2})(\d{2})/i', $c, $m)) {
+            $yy = (int) $m[1];
+            $mm = (int) $m[2];
+            $dd = (int) $m[3];
+            if ($mm >= 1 && $mm <= 12 && $dd >= 1 && $dd <= 31) {
+                $currentYy = (int) date('y');
+                $year = ($yy > $currentYy) ? 1900 + $yy : 2000 + $yy;
+                return sprintf('%04d-%02d-%02d', $year, $mm, $dd);
+            }
+        }
+        return null;
+    }
+
+    private function normalizePhone(?string $value): string
+    {
+        if (empty($value)) return 'S/N';
+        $val = trim($value);
+        if ($this->isPlaceholder($val)) return 'S/N';
+        $noFloat = preg_replace('/\.0+$/', '', $val);
+        $digits = preg_replace('/\D/', '', $noFloat);
+        return $digits ?: 'S/N';
     }
 
     private function resolveClientId(string $inputId, string $nombre, array &$stats): string

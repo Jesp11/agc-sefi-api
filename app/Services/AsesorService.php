@@ -115,12 +115,27 @@ class AsesorService
         return $fullYear . '-' . $month . '-' . $day;
     }
 
+    public function normalizePhone(?string $value): ?string
+    {
+        if (empty($value)) return null;
+        $val = trim($value);
+        if (in_array(strtoupper($val), ['S/N', 'NO ESPECIFICADO', 'N/A', 'NA', '-', 'NONE', 'NULL'], true)) {
+            return null;
+        }
+        $noFloat = preg_replace('/\.0+$/', '', $val);
+        $digits = preg_replace('/\D/', '', $noFloat);
+        return $digits ?: null;
+    }
+
     public function create(array $data): Asesor
     {
         $data['rol_laboral'] = $data['rol_laboral'] ?? 'Gestor de Cobranza';
         $data['id_asesor'] = $this->generateIdAsesor($data['nombre_asesor'], $data['rol_laboral']);
         $data['curp'] = strtoupper($data['curp']);
         $data['cumpleanos'] = $this->cumpleanosFromCurp($data['curp']);
+        if (! empty($data['telefono'])) {
+            $data['telefono'] = $this->normalizePhone($data['telefono']);
+        }
 
         return Asesor::create($data);
     }
@@ -144,7 +159,7 @@ class AsesorService
         ];
 
         if (array_key_exists('telefono', $data)) {
-            $payload['telefono'] = $data['telefono'] ?: null;
+            $payload['telefono'] = $this->normalizePhone($data['telefono']);
         }
 
         if ($asesor) {

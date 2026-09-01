@@ -65,6 +65,8 @@ Route::middleware('auth:api')->group(function () {
 
     Route::apiResource('referencias', ReferenciaController::class);
     Route::apiResource('avales', AvalController::class);
+    Route::get('grupos/export', [GrupoController::class, 'export']);
+    Route::post('grupos/import', [GrupoController::class, 'import']);
     Route::apiResource('grupos', GrupoController::class);
     Route::post('grupos/{id}/agregar-cliente', [GrupoController::class, 'agregarCliente']);
     Route::post('grupos/{id}/quitar-cliente', [GrupoController::class, 'quitarCliente']);
@@ -178,6 +180,7 @@ Route::middleware('auth:api')->group(function () {
     Route::get('reportes/gestor/mensual', [ReporteController::class, 'gestorMensual']);
     Route::get('reportes/clientes-sin-renovacion', [ReporteController::class, 'clientesSinRenovacion']);
     Route::get('reportes/comparativas', [ReporteController::class, 'comparativas']);
+    Route::get('reportes/cumpleanos', [ReporteController::class, 'cumpleanos']);
 
     // Simulación
     Route::post('simular/individual', [\App\Http\Controllers\SimulationController::class, 'simulateIndividual']);

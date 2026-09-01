@@ -41,6 +41,14 @@ class ExcelImportController extends Controller
             'rows.*.total' => 'nullable|numeric',
             'rows.*.saldo_total' => 'nullable|numeric',
             'rows.*.saldo_inversion' => 'nullable|numeric',
+            'rows.*.curp' => 'nullable|string|max:50',
+            'rows.*.clave_elector' => 'nullable|string|max:50',
+            'rows.*.telefono' => 'nullable|string|max:50',
+            'rows.*.direccion' => 'nullable|string|max:255',
+            'rows.*.entre_calles' => 'nullable|string|max:255',
+            'rows.*.ocupacion' => 'nullable|string|max:100',
+            'rows.*.direccion_trabajo' => 'nullable|string|max:255',
+            'rows.*.telefono_trabajo' => 'nullable|string|max:50',
         ]);
 
         $result = $service->importar($data['rows']);
