@@ -10,6 +10,7 @@ class NominaPeriodo extends Model
 
     protected $fillable = [
         'fecha_inicio', 'fecha_fin', 'total_dispersado', 'registrado_por',
+        'referencia', 'firma_director_administrativo', 'firma_director_operativo'
     ];
 
     protected $casts = [

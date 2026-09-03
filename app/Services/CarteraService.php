@@ -37,7 +37,15 @@ class CarteraService
         $diaSemana = self::DIAS_SEMANA[$fechaRef->dayOfWeek];
 
         $query = Credito::with(['cliente', 'grupo', 'asesor', 'pagos'])
-            ->where('estado', 'Activo');
+            ->where(function ($q) use ($fechaRef) {
+                $q->where('estado', 'Activo')
+                  ->orWhere(function ($sub) use ($fechaRef) {
+                      $sub->where('estado', 'Finalizado')
+                          ->whereHas('pagos', function ($pq) use ($fechaRef) {
+                              $pq->whereDate('fecha', '>=', $fechaRef->toDateString());
+                          });
+                  });
+            });
 
         if ($idAsesor) {
             $query->where('id_asesor', $idAsesor);
@@ -63,7 +71,7 @@ class CarteraService
         $pagosDelDia = Pago::query()
             ->whereDate('fecha', $fechaRef->toDateString())
             ->whereHas('credito', function ($q) use ($idAsesor) {
-                $q->where('estado', 'Activo');
+                $q->whereIn('estado', ['Activo', 'Finalizado']);
                 if ($idAsesor) {
                     $q->where('id_asesor', $idAsesor);
                 }
@@ -89,7 +97,7 @@ class CarteraService
 
     private function buildCobroItem(Credito $credito, Carbon $fechaRef, string $diaSemana): ?array
     {
-        if ($credito->estado !== 'Activo') {
+        if (!in_array($credito->estado, ['Activo', 'Finalizado'], true)) {
             return null;
         }
 
@@ -98,7 +106,10 @@ class CarteraService
             return null;
         }
 
-        $abonado = (float) $credito->pagos->where('tipo', 'Abono')->sum('monto');
+        $abonado = (float) $credito->pagos
+            ->where('tipo', 'Abono')
+            ->filter(fn ($p) => $p->fecha && Carbon::parse($p->fecha)->startOfDay()->lt($fechaRef))
+            ->sum('monto');
         $restanteAbonado = $abonado;
         $pendientes = [];
 
@@ -128,25 +139,24 @@ class CarteraService
             return null;
         }
 
-        $tieneAtrasadas = collect($pendientes)->contains(fn ($c) => $c['atrasada']);
+        // Por petición: Solo agendar la cuota más antigua pendiente (una sola).
+        $oldest = $pendientes[0];
+        $pendientesParaCobro = [$oldest];
+
+        $tieneAtrasadas = $oldest['atrasada'];
         $diaPago = $this->normalizarDiaPago($credito->dias_pago);
         $esDiaPago = $diaPago === $diaSemana;
 
-        // Del día: toca cobrar por día de pago.
-        // Atrasados: cuotas vencidas de días anteriores (cualquier día de pago).
+        // Del día: clientes cuyo día asignado es hoy.
+        // Atrasados: clientes de otros días que deben cuotas pasadas.
         if (!$tieneAtrasadas && !$esDiaPago) {
             return null;
         }
 
-        $categoria = $tieneAtrasadas ? 'atrasado' : 'del_dia';
+        $categoria = $esDiaPago ? 'del_dia' : 'atrasado';
         $diasAtraso = 0;
-        foreach ($pendientes as $p) {
-            if ($p['atrasada']) {
-                $diasAtraso = max(
-                    $diasAtraso,
-                    Carbon::parse($p['fecha'])->diffInDays($fechaRef)
-                );
-            }
+        if ($tieneAtrasadas) {
+            $diasAtraso = Carbon::parse($oldest['fecha'])->diffInDays($fechaRef);
         }
 
         return [
@@ -156,16 +166,16 @@ class CarteraService
             'dias_pago' => $credito->dias_pago,
             'ciclo' => $credito->ciclo,
             'valor_ficha' => (float) $credito->valor_ficha,
-            'saldo_pendiente' => (float) ($credito->saldo_pendiente ?? $credito->total),
-            'monto_a_cobrar' => round(array_sum(array_column($pendientes, 'monto')), 2),
-            'cuotas_pendientes' => count($pendientes),
-            'cuotas_atrasadas' => count(array_filter($pendientes, fn ($c) => $c['atrasada'])),
+            'saldo_pendiente' => (float) $credito->saldo_pendiente,
+            'monto_a_cobrar' => round($oldest['monto'], 2),
+            'cuotas_pendientes' => count($pendientes), // Total real pendiente
+            'cuotas_atrasadas' => collect($pendientes)->where('atrasada', true)->count(),
             'dias_atraso' => $diasAtraso,
             'categoria' => $categoria,
-            'cliente' => $credito->cliente,
-            'grupo' => $credito->grupo,
-            'asesor' => $credito->asesor,
-            'pendientes' => $pendientes,
+            'cliente' => $credito->cliente?->toArray() ?? [],
+            'grupo' => $credito->grupo?->toArray(),
+            'asesor' => $credito->asesor?->toArray(),
+            'pendientes' => $pendientesParaCobro,
         ];
     }
 

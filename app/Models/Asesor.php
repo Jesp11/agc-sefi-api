@@ -20,6 +20,16 @@ class Asesor extends Model
         'rol_laboral',
         'ine_path',
         'ine_path_2',
+        'rfc',
+        'nss',
+        'banco',
+        'cuenta_bancaria',
+        'sueldo_base',
+        'despensa',
+        'apoyo_transporte',
+        'bono_productividad',
+        'aportacion_socio',
+        'activo'
     ];
 
     public function creditos()

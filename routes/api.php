@@ -134,8 +134,11 @@ Route::middleware('auth:api')->group(function () {
     Route::post('flujo-caja/import', [FlujoCajaController::class, 'import'])
         ->middleware('role:admin');
     Route::post('flujo-caja', [FlujoCajaController::class, 'store']);
+    Route::get('empleados/export', [EmpleadoController::class, 'export']);
+    Route::post('empleados/import', [EmpleadoController::class, 'import']);
     Route::get('empleados', [EmpleadoController::class, 'index']);
     Route::post('empleados', [EmpleadoController::class, 'store']);
+    Route::get('empleados/{id}', [EmpleadoController::class, 'show']);
     Route::put('empleados/{id}', [EmpleadoController::class, 'update']);
     Route::get('nomina', [NominaController::class, 'index']);
     Route::post('nomina', [NominaController::class, 'store']);

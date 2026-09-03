@@ -2,12 +2,13 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Empleado;
 use App\Models\NominaPeriodo;
 use App\Models\NominaDetalle;
-use App\Models\AhorroEmpleado;
-use App\Models\AhorroMovimiento;
+use App\Models\AhorroPersonal;
+use App\Models\AhorroPersonalMovimiento;
+use App\Models\Asesor;
 use App\Models\MovimientoCapital;
+use App\Services\FlujoCajaService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -15,82 +16,78 @@ class NominaController extends Controller
 {
     public function index()
     {
-        return response()->json(NominaPeriodo::with('detalles.empleado')->orderByDesc('fecha_inicio')->paginate(10));
+        return response()->json(NominaPeriodo::with(['detalles.asesor', 'detalles.empleado'])->orderByDesc('fecha_inicio')->paginate(10));
     }
 
-    public function store(Request $request)
+    public function store(Request $request, FlujoCajaService $flujoCajaService)
     {
         $data = $request->validate([
             'fecha_inicio' => 'required|date',
             'fecha_fin' => 'required|date|after_or_equal:fecha_inicio',
-            'ajustes' => 'nullable|array',
-            'ajustes.*.empleado_id' => 'required|integer|exists:empleados,id',
-            'ajustes.*.percepciones' => 'nullable|array',
-            'ajustes.*.percepciones.*.concepto' => 'required_with:ajustes.*.percepciones|string|max:255',
-            'ajustes.*.percepciones.*.monto' => 'required_with:ajustes.*.percepciones|numeric|min:0',
-            'ajustes.*.deducciones' => 'nullable|array',
-            'ajustes.*.deducciones.*.concepto' => 'required_with:ajustes.*.deducciones|string|max:255',
-            'ajustes.*.deducciones.*.monto' => 'required_with:ajustes.*.deducciones|numeric|min:0',
+            'referencia' => 'nullable|string|max:255',
+            'firma_director_administrativo' => 'nullable|string|max:255',
+            'firma_director_operativo' => 'nullable|string|max:255',
+            'empleados' => 'required|array|min:1',
+            'empleados.*.asesor_id' => 'required|integer|distinct|exists:asesores,id',
+            'empleados.*.pago_base' => 'required|numeric|min:0',
+            'empleados.*.despensa' => 'required|numeric|min:0',
+            'empleados.*.apoyo_transporte' => 'required|numeric|min:0',
+            'empleados.*.ahorro' => 'required|numeric|min:0',
         ]);
 
-        return DB::transaction(function () use ($data) {
+        DB::beginTransaction();
+        try {
             $periodo = NominaPeriodo::create([
                 'fecha_inicio' => $data['fecha_inicio'],
                 'fecha_fin' => $data['fecha_fin'],
+                'referencia' => $data['referencia'] ?? null,
+                'firma_director_administrativo' => $data['firma_director_administrativo'] ?? null,
+                'firma_director_operativo' => $data['firma_director_operativo'] ?? null,
                 'registrado_por' => auth()->id(),
             ]);
 
-            $empleados = Empleado::where('activo', true)->get();
-            $ajustesPeriodo = collect($data['ajustes'] ?? [])->keyBy('empleado_id');
             $totalDispersado = 0;
-
-            foreach ($empleados as $empleado) {
-                $percepcionesBase = collect($empleado->percepciones_config ?? [])
-                    ->map(fn ($item) => ['concepto' => $item['concepto'], 'monto' => round((float) $item['monto'], 2)]);
-                $deduccionesBase = collect($empleado->deducciones_config ?? [])
-                    ->map(fn ($item) => ['concepto' => $item['concepto'], 'monto' => round((float) $item['monto'], 2)]);
-                $ajuste = $ajustesPeriodo->get($empleado->id, []);
-                $percepcionesPeriodo = collect($ajuste['percepciones'] ?? [])
-                    ->map(fn ($item) => ['concepto' => $item['concepto'], 'monto' => round((float) $item['monto'], 2)]);
-                $deduccionesPeriodo = collect($ajuste['deducciones'] ?? [])
-                    ->map(fn ($item) => ['concepto' => $item['concepto'], 'monto' => round((float) $item['monto'], 2)]);
-
-                $totalPercepciones = round((float) $percepcionesBase->sum('monto') + (float) $percepcionesPeriodo->sum('monto'), 2);
-                $totalDeduccionesExtras = round((float) $deduccionesBase->sum('monto') + (float) $deduccionesPeriodo->sum('monto'), 2);
-                $retencion = $empleado->porcentaje_ahorro
-                    ? round($empleado->sueldo_base * ($empleado->porcentaje_ahorro / 100), 2)
-                    : 0;
-                $neto = round($empleado->sueldo_base + $totalPercepciones - $retencion - $totalDeduccionesExtras, 2);
+            $pagosNomina = [];
+            foreach ($data['empleados'] as $empData) {
+                $percepciones = $empData['pago_base'] + $empData['despensa'] + $empData['apoyo_transporte'];
+                $retencion = $empData['ahorro'];
+                $deducciones = $retencion;
+                $neto = $percepciones - $deducciones;
 
                 NominaDetalle::create([
                     'periodo_id' => $periodo->id,
-                    'empleado_id' => $empleado->id,
-                    'sueldo_bruto' => $empleado->sueldo_base,
-                    'total_percepciones' => $totalPercepciones,
+                    'asesor_id' => $empData['asesor_id'],
+                    'sueldo_bruto' => $empData['pago_base'],
+                    'pago_base' => $empData['pago_base'],
+                    'despensa' => $empData['despensa'],
+                    'apoyo_transporte' => $empData['apoyo_transporte'],
+                    'total_percepciones' => $percepciones,
                     'retencion_ahorro' => $retencion,
-                    'total_deducciones' => $totalDeduccionesExtras,
+                    'total_deducciones' => $deducciones,
                     'sueldo_neto' => $neto,
-                    'detalle_ajustes' => [
-                        'percepciones_config' => $percepcionesBase->values()->all(),
-                        'deducciones_config' => $deduccionesBase->values()->all(),
-                        'percepciones_periodo' => $percepcionesPeriodo->values()->all(),
-                        'deducciones_periodo' => $deduccionesPeriodo->values()->all(),
-                    ],
+                    'detalle_ajustes' => []
                 ]);
 
                 if ($retencion > 0) {
-                    $ahorro = AhorroEmpleado::firstOrCreate(['empleado_id' => $empleado->id], ['saldo' => 0]);
+                    $ahorro = AhorroPersonal::firstOrCreate(['asesor_id' => $empData['asesor_id']], ['saldo' => 0]);
                     $ahorro->increment('saldo', $retencion);
-                    AhorroMovimiento::create([
-                        'ahorro_id' => $ahorro->id,
-                        'tipo' => 'Deduccion',
+                    AhorroPersonalMovimiento::create([
+                        'ahorro_personal_id' => $ahorro->id,
+                        'tipo' => 'Ingreso',
                         'monto' => $retencion,
                         'fecha' => $data['fecha_fin'],
-                        'notas' => "Nómina periodo #{$periodo->id}",
+                        'notas' => "Nómina periodo #{$periodo->id}" . ($data['referencia'] ? " Ref: {$data['referencia']}" : ""),
+                        'registrado_por' => auth()->id(),
                     ]);
                 }
 
                 $totalDispersado += $neto;
+                if ($neto > 0) {
+                    $pagosNomina[] = [
+                        'asesor_id' => $empData['asesor_id'],
+                        'monto' => $neto,
+                    ];
+                }
             }
 
             $periodo->update(['total_dispersado' => $totalDispersado]);
@@ -98,16 +95,40 @@ class NominaController extends Controller
             MovimientoCapital::create([
                 'tipo' => 'Nomina',
                 'monto' => -$totalDispersado,
-                'referencia' => "NOM-{$periodo->id}",
+                'referencia' => $data['referencia'] ? "NOM-{$data['referencia']}" : "NOM-{$periodo->id}",
                 'fecha' => $data['fecha_fin'],
                 'descripcion' => "Dispersión nómina {$data['fecha_inicio']} - {$data['fecha_fin']}",
                 'registrado_por' => auth()->id(),
             ]);
 
+            if ($totalDispersado > 0) {
+                $referenciaMovimiento = $data['referencia'] ?? "Periodo #{$periodo->id}";
+                $asesores = Asesor::whereIn('id', collect($pagosNomina)->pluck('asesor_id'))
+                    ->pluck('nombre_asesor', 'id');
+
+                foreach ($pagosNomina as $pago) {
+                    $nombre = $asesores[$pago['asesor_id']] ?? "Empleado #{$pago['asesor_id']}";
+                    $flujoCajaService->registrar([
+                        'fecha' => $data['fecha_fin'],
+                        'id_asesor' => $pago['asesor_id'],
+                        'motivo' => "NÓMINA — {$referenciaMovimiento} — {$nombre}",
+                        'tipo' => 'Egreso',
+                        'monto' => $pago['monto'],
+                        'categoria' => 'Nomina',
+                        'referencia' => "NOM-{$periodo->id}-ASESOR-{$pago['asesor_id']}",
+                    ]);
+                }
+            }
+
+            DB::commit();
+
             return response()->json([
                 'message' => 'Nómina procesada',
-                'data' => $periodo->load('detalles.empleado'),
+                'data' => $periodo->load('detalles')
             ], 201);
-        });
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['message' => 'Error al procesar nómina', 'error' => $e->getMessage()], 500);
+        }
     }
 }

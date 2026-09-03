@@ -43,8 +43,7 @@ class ReportService
         $fecha = $fecha ?? now()->toDateString();
 
         $pagosQuery = Pago::with(['credito.cliente', 'credito.grupo', 'credito.asesor'])
-            ->whereDate('fecha', $fecha)
-            ->whereHas('credito', fn ($q) => $q->where('estado', 'Activo'));
+            ->whereDate('fecha', $fecha);
 
         $creditosQuery = Credito::with(['cliente', 'grupo', 'asesor'])
             ->whereDate('fecha_otorgacion', $fecha)
@@ -65,7 +64,6 @@ class ReportService
         $cobrosDelDiaData = app(CarteraService::class)->cobrosDelDia($fecha, $idAsesor);
         $cobrosProgramados = collect($cobrosDelDiaData['cobros'] ?? [])
             ->filter(fn ($cobro) => ($cobro['estado'] ?? null) !== 'EnMora')
-            ->filter(fn ($cobro) => ($cobro['categoria'] ?? null) !== 'atrasado')
             ->values();
 
         $creditosEnMora = collect($cobrosDelDiaData['cobros'] ?? [])
@@ -96,6 +94,7 @@ class ReportService
             'dia_semana' => $cobrosDelDiaData['dia_semana'] ?? null,
             'total_abonos' => $totalAbonosRegistrados,
             'total_programado_dia' => round((float) $cobrosProgramados->where('categoria', 'del_dia')->sum('monto_a_cobrar'), 2),
+            'total_atrasado' => round((float) $cobrosProgramados->where('categoria', 'atrasado')->sum('monto_a_cobrar'), 2),
             'total_exigible' => round((float) $cobrosProgramados->sum('monto_a_cobrar'), 2),
             'creditos_otorgados' => $creditos->count(),
             'monto_colocado' => $montoColocado,
@@ -126,9 +125,10 @@ class ReportService
 
                 $cobrado = round((float) $pagosAsesor->sum('monto'), 2);
                 $progDelDia = round((float) $cobrosAsesor->where('categoria', 'del_dia')->sum('monto_a_cobrar'), 2);
+                $progAtrasado = round((float) $cobrosAsesor->where('categoria', 'atrasado')->sum('monto_a_cobrar'), 2);
                 $progTotal = round((float) $cobrosAsesor->sum('monto_a_cobrar'), 2);
 
-                $aRecibir = max($cobrado, $progDelDia);
+                $aRecibir = max($cobrado, $progTotal);
 
                 $porAsesor[] = [
                     'id_asesor' => (int) $aid,
@@ -136,9 +136,11 @@ class ReportService
                     'codigo_asesor' => $asesor?->id_asesor,
                     'num_abonos' => $pagosAsesor->count(),
                     'total_cobrado' => $cobrado,
+                    'prog_del_dia' => $progDelDia,
+                    'prog_atrasado' => $progAtrasado,
                     'num_programados' => $cobrosAsesor->count(),
                     'num_del_dia' => $cobrosAsesor->where('categoria', 'del_dia')->count(),
-                    'monto_programado' => $progDelDia,
+                    'monto_programado' => $progTotal,
                     'monto_exigible' => $progTotal,
                     'a_recibir' => $aRecibir,
                     'creditos_otorgados' => $creditosAsesor->count(),

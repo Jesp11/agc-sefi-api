@@ -2,28 +2,18 @@
 
 namespace App\Http\Requests;
 
-use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 
 class UpdateAsesorRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     */
-    public function authorize(): bool
+    public function authorize()
     {
         return true;
     }
 
-    /**
-     * Get the validation rules that apply to the request.
-     *
-     * @return array<string, ValidationRule|array<mixed>|string>
-     */
-    public function rules(): array
+    public function rules()
     {
-        $asesorParam = $this->route('asesore') ?? $this->route('asesor') ?? $this->route('id');
-        $asesorId = is_object($asesorParam) ? ($asesorParam->id ?? null) : $asesorParam;
+        $asesorId = $this->route('asesore');
 
         return [
             'nombre_asesor' => 'sometimes|string|max:255',
@@ -34,6 +24,17 @@ class UpdateAsesorRequest extends FormRequest
             'ine_2'         => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:5120',
             'delete_ine'    => 'nullable|boolean',
             'delete_ine_2'  => 'nullable|boolean',
+            
+            'rfc' => 'nullable|string|max:255',
+            'nss' => 'nullable|string|max:255',
+            'banco' => 'nullable|string|max:255',
+            'cuenta_bancaria' => 'nullable|string|max:255',
+            'sueldo_base' => 'nullable|numeric|min:0',
+            'despensa' => 'nullable|numeric|min:0',
+            'apoyo_transporte' => 'nullable|numeric|min:0',
+            'bono_productividad' => 'nullable|numeric|min:0',
+            'aportacion_socio' => 'nullable|numeric|min:0',
+            'activo' => 'nullable|boolean',
         ];
     }
 }
