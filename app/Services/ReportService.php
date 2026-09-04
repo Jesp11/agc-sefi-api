@@ -186,6 +186,10 @@ class ReportService
                 (float) collect($payload['por_asesor'])->sum(fn ($r) => $r['monto_recibido'] ?? 0),
                 2
             );
+            $payload['diferencia_cobrado_recibido'] = round(
+                (float) $payload['total_abonos'] - (float) $payload['total_recibido'],
+                2
+            );
             $payload['total_pendiente'] = round(
                 (float) collect($payload['por_asesor'])->sum(fn ($r) => $r['pendiente_entrega'] ?? 0),
                 2
