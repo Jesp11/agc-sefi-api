@@ -7,6 +7,7 @@ use App\Models\Aportacion;
 use App\Models\Credito;
 use App\Models\GastoOperativo;
 use App\Models\MovimientoCapital;
+use App\Models\MovimientoCaja;
 use App\Services\FlujoCajaService;
 use Illuminate\Support\Facades\DB;
 
@@ -105,6 +106,48 @@ class CapitalService
             app(FlujoCajaService::class)->registrarDesdeGasto($gasto);
 
             return $gasto;
+        });
+    }
+
+    public function actualizarGasto(GastoOperativo $gasto, array $data): GastoOperativo
+    {
+        return DB::transaction(function () use ($gasto, $data) {
+            $fechaAnterior = $gasto->fecha?->toDateString() ?? $data['fecha'];
+
+            $gasto->update([
+                'concepto' => $data['concepto'],
+                'monto' => $data['monto'],
+                'fecha' => $data['fecha'],
+                'categoria' => $data['categoria'] ?? null,
+                'cuenta' => $data['cuenta'] ?? null,
+                'catalogo_gasto_id' => $data['catalogo_gasto_id'] ?? null,
+            ]);
+
+            MovimientoCapital::where('referencia', "GASTO-{$gasto->id}")->update([
+                'monto' => -abs((float) $gasto->monto),
+                'fecha' => $gasto->fecha,
+                'descripcion' => $gasto->concepto,
+            ]);
+
+            $movimientoCaja = MovimientoCaja::where('referencia', "GASTO-{$gasto->id}")->first();
+            if ($movimientoCaja) {
+                $movimientoCaja->update([
+                    'fecha' => $gasto->fecha,
+                    'motivo' => $gasto->concepto,
+                    'monto' => $gasto->monto,
+                    'categoria' => $gasto->categoria ?: 'GastoOperativo',
+                    'cuenta' => $gasto->cuenta,
+                ]);
+
+                app(FlujoCajaService::class)->recalcularSaldosDesde(min(
+                    $fechaAnterior,
+                    $gasto->fecha->toDateString(),
+                ));
+            } else {
+                app(FlujoCajaService::class)->registrarDesdeGasto($gasto);
+            }
+
+            return $gasto->fresh();
         });
     }
 

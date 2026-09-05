@@ -76,6 +76,34 @@ class FlujoCajaService
         });
     }
 
+    /** Edita un movimiento manual o importado y recalcula el saldo posterior. */
+    public function actualizar(MovimientoCaja $movimiento, array $data): MovimientoCaja
+    {
+        if ($movimiento->pago_id || str_starts_with((string) $movimiento->referencia, 'GASTO-') || str_starts_with((string) $movimiento->referencia, 'DESEMBOLSO-')) {
+            throw new \InvalidArgumentException('Este movimiento se genera desde un pago, gasto o desembolso. Corrige el registro de origen para conservar la caja sincronizada.');
+        }
+
+        return DB::transaction(function () use ($movimiento, $data) {
+            $fechaAnterior = $movimiento->fecha->format('Y-m-d');
+            $motivo = $data['motivo'];
+            $tipo = $data['tipo'];
+            $movimiento->update([
+                'fecha' => $data['fecha'],
+                'id_asesor' => $data['id_asesor'] ?? null,
+                'motivo' => $motivo,
+                'tipo' => $tipo,
+                'monto' => abs((float) $data['monto']),
+                'categoria' => $data['categoria'] ?? $this->inferirCategoria($motivo, $tipo),
+                'cuenta' => $data['cuenta'] ?? null,
+                'num_prog' => $data['num_prog'] ?? $movimiento->num_prog,
+            ]);
+
+            $this->recalcularSaldosDesde(min($fechaAnterior, $data['fecha']));
+
+            return $movimiento->fresh(['asesor', 'credito.cliente', 'credito.grupo']);
+        });
+    }
+
     public function registrarDesdePago(Pago $pago, Credito $credito): ?MovimientoCaja
     {
         if ($pago->tipo !== 'Abono') {
@@ -88,7 +116,7 @@ class FlujoCajaService
 
         $clienteNombre = $credito->cliente?->nombre_completo
             ?? $credito->grupo?->nombre_grupo
-            ?? 'Crédito #' . $credito->num_prog;
+            ?? 'Crédito #'.$credito->num_prog;
 
         return $this->registrar([
             'fecha' => $pago->fecha->format('Y-m-d'),
@@ -116,6 +144,7 @@ class FlujoCajaService
             'tipo' => 'Egreso',
             'monto' => $gasto->monto,
             'categoria' => $gasto->categoria ?: 'GastoOperativo',
+            'cuenta' => $gasto->cuenta,
             'referencia' => "GASTO-{$gasto->id}",
         ]);
     }

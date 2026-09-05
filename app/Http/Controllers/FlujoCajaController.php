@@ -2,8 +2,9 @@
 
 namespace App\Http\Controllers;
 
-use App\Services\FlujoCajaService;
+use App\Models\MovimientoCaja;
 use App\Services\FlujoCajaImportService;
+use App\Services\FlujoCajaService;
 use Illuminate\Http\Request;
 
 class FlujoCajaController extends Controller
@@ -31,16 +32,7 @@ class FlujoCajaController extends Controller
 
     public function store(Request $request)
     {
-        $data = $request->validate([
-            'fecha' => 'required|date',
-            'id_asesor' => 'nullable|integer|exists:asesores,id',
-            'motivo' => 'required|string|max:500',
-            'tipo' => 'required|in:Ingreso,Egreso',
-            'monto' => 'required|numeric|min:0.01',
-            'categoria' => 'nullable|string|max:50',
-            'cuenta' => 'nullable|string|max:30',
-            'num_prog' => 'nullable|integer|exists:creditos,num_prog',
-        ]);
+        $data = $this->validatedMovimiento($request);
 
         $mov = $this->service->registrar($data);
 
@@ -48,6 +40,22 @@ class FlujoCajaController extends Controller
             'message' => 'Movimiento registrado',
             'data' => $mov,
         ], 201);
+    }
+
+    public function update(Request $request, MovimientoCaja $movimiento)
+    {
+        $data = $this->validatedMovimiento($request);
+
+        try {
+            $mov = $this->service->actualizar($movimiento, $data);
+        } catch (\InvalidArgumentException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+
+        return response()->json([
+            'message' => 'Movimiento actualizado',
+            'data' => $mov,
+        ]);
     }
 
     public function cuentas()
@@ -83,5 +91,19 @@ class FlujoCajaController extends Controller
             'message' => "Importación completada: {$result['created']} movimiento(s) creados.",
             ...$result,
         ], empty($result['errors']) ? 200 : 207);
+    }
+
+    private function validatedMovimiento(Request $request): array
+    {
+        return $request->validate([
+            'fecha' => 'required|date',
+            'id_asesor' => 'nullable|integer|exists:asesores,id',
+            'motivo' => 'required|string|max:500',
+            'tipo' => 'required|in:Ingreso,Egreso',
+            'monto' => 'required|numeric|min:0.01',
+            'categoria' => 'nullable|string|max:50',
+            'cuenta' => 'nullable|string|max:30',
+            'num_prog' => 'nullable|integer|exists:creditos,num_prog',
+        ]);
     }
 }

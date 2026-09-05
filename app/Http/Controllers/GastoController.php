@@ -41,4 +41,20 @@ class GastoController extends Controller
         $gasto = $capitalService->registrarGasto($data);
         return response()->json(['message' => 'Gasto registrado', 'data' => $gasto], 201);
     }
+
+    public function update(Request $request, GastoOperativo $gasto, CapitalService $capitalService)
+    {
+        $data = $request->validate([
+            'catalogo_gasto_id' => 'nullable|integer|exists:catalogo_gastos,id',
+            'concepto' => 'required|string|max:255',
+            'monto' => 'required|numeric|min:0.01',
+            'fecha' => 'required|date',
+            'categoria' => 'nullable|string',
+            'cuenta' => 'nullable|string|max:30',
+        ]);
+
+        $gasto = $capitalService->actualizarGasto($gasto, $data);
+
+        return response()->json(['message' => 'Gasto actualizado', 'data' => $gasto]);
+    }
 }

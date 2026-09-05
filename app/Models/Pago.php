@@ -20,6 +20,7 @@ class Pago extends Model
         'metodo_pago',
         'tipo',
         'notas',
+        'referencia_importacion',
         'registrado_por',
     ];
 

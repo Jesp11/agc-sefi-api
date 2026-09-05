@@ -31,6 +31,7 @@ use App\Http\Controllers\ReporteController;
 use App\Http\Controllers\BusquedaGlobalController;
 use App\Http\Controllers\ExcelImportController;
 use App\Http\Controllers\RenovacionHistoricaImportController;
+use App\Http\Controllers\PagosRutaImportController;
 
 Route::group([
     'middleware' => 'api',
@@ -126,6 +127,7 @@ Route::middleware('auth:api')->group(function () {
     Route::get('capital', [CapitalController::class, 'index']);
     Route::get('gastos', [GastoController::class, 'index']);
     Route::post('gastos', [GastoController::class, 'store']);
+    Route::put('gastos/{gasto}', [GastoController::class, 'update']);
     Route::get('catalogo-gastos', [CatalogoGastoController::class, 'index']);
     Route::post('catalogo-gastos', [CatalogoGastoController::class, 'store']);
     Route::put('catalogo-gastos/{id}', [CatalogoGastoController::class, 'update']);
@@ -135,6 +137,7 @@ Route::middleware('auth:api')->group(function () {
     Route::post('flujo-caja/import', [FlujoCajaController::class, 'import'])
         ->middleware('role:admin');
     Route::post('flujo-caja', [FlujoCajaController::class, 'store']);
+    Route::put('flujo-caja/{movimiento}', [FlujoCajaController::class, 'update']);
     Route::get('empleados/export', [EmpleadoController::class, 'export']);
     Route::post('empleados/import', [EmpleadoController::class, 'import']);
     Route::get('empleados', [EmpleadoController::class, 'index']);
@@ -162,6 +165,10 @@ Route::middleware('auth:api')->group(function () {
     Route::get('reportes/diario', [ReporteController::class, 'diario']);
     Route::get('reportes/pagos-atrasados', [ReporteController::class, 'pagosAtrasados']);
     Route::post('reportes/diario/recibir', [ReporteController::class, 'recibirAsesor'])
+        ->middleware('role:admin');
+    Route::post('reportes/diario/pagos-ruta/preview', [PagosRutaImportController::class, 'preview'])
+        ->middleware('role:admin');
+    Route::post('reportes/diario/pagos-ruta/confirm', [PagosRutaImportController::class, 'confirm'])
         ->middleware('role:admin');
     Route::get('reportes/cartera', [ReporteController::class, 'cartera']);
     Route::get('reportes/asesor/diario', [ReporteController::class, 'asesorDiario']);

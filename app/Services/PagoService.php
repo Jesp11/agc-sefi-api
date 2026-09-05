@@ -32,6 +32,7 @@ class PagoService
                 'hora' => $hora,
                 'metodo_pago' => $data['metodo_pago'] ?? 'Efectivo',
                 'notas' => $data['notas'] ?? null,
+                'referencia_importacion' => $data['referencia_importacion'] ?? null,
                 'registrado_por' => Auth::id(),
             ];
 

@@ -121,6 +121,8 @@ class ReportService
                         'monto_neto' => (float) $renovacion->monto_neto,
                         'plazos' => $nuevo?->plazos,
                         'cliente' => $nuevo?->cliente?->nombre_completo ?? $nuevo?->grupo?->nombre_grupo,
+                        'cliente_id' => $nuevo?->id_cliente,
+                        'grupo_id' => $nuevo?->id_grupo,
                         'gestor' => $nuevo?->asesor?->nombre_asesor,
                     ];
                 })->values(),
