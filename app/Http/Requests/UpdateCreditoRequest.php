@@ -27,7 +27,7 @@ class UpdateCreditoRequest extends FormRequest
             'id_grupo' => 'sometimes|nullable|integer|exists:grupos,id',
             'fecha_otorgacion' => 'sometimes|date',
             'fecha_primer_pago' => 'sometimes|nullable|date',
-            'ciclo' => 'sometimes|integer|min:1',
+            'ciclo' => 'sometimes|integer|min:0',
             'ciclo_inicio_mora' => 'sometimes|nullable|integer|min:1',
             'monto_otorgado' => 'sometimes|numeric|min:0',
             'interes' => 'sometimes|numeric|min:0',
