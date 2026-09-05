@@ -4,7 +4,9 @@ namespace Tests\Feature;
 
 use App\Models\Cliente;
 use App\Models\Credito;
+use App\Models\GastoOperativo;
 use App\Models\MovimientoCaja;
+use App\Models\MovimientoCapital;
 use App\Services\FlujoCajaService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -16,7 +18,7 @@ class FlujoCajaDesembolsoTest extends TestCase
     {
         parent::setUp();
 
-        foreach (['movimientos_caja', 'creditos', 'clientes', 'asesores'] as $table) {
+        foreach (['movimientos_caja', 'movimientos_capital', 'gastos_operativos', 'creditos', 'clientes', 'asesores'] as $table) {
             Schema::dropIfExists($table);
         }
 
@@ -57,6 +59,24 @@ class FlujoCajaDesembolsoTest extends TestCase
             $table->unsignedBigInteger('pago_id')->nullable();
             $table->string('referencia')->nullable();
             $table->unsignedBigInteger('registrado_por')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('gastos_operativos', function (Blueprint $table) {
+            $table->id();
+            $table->string('concepto');
+            $table->decimal('monto', 12, 2);
+            $table->date('fecha');
+            $table->string('categoria')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('movimientos_capital', function (Blueprint $table) {
+            $table->id();
+            $table->string('tipo');
+            $table->decimal('monto', 14, 2);
+            $table->string('referencia')->nullable();
+            $table->date('fecha');
             $table->timestamps();
         });
     }
@@ -137,5 +157,36 @@ class FlujoCajaDesembolsoTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
 
         app(FlujoCajaService::class)->eliminar($movimiento);
+    }
+
+    public function test_deleting_a_rendimiento_recorded_as_gasto_removes_its_source_records(): void
+    {
+        $gasto = GastoOperativo::create([
+            'concepto' => 'PAGO RENDIMIENTOS',
+            'monto' => 4250,
+            'fecha' => '2026-09-01',
+            'categoria' => 'RENDIMIENTOS',
+        ]);
+        $referencia = "GASTO-{$gasto->id}";
+        MovimientoCapital::create([
+            'tipo' => 'Gasto',
+            'monto' => -4250,
+            'referencia' => $referencia,
+            'fecha' => '2026-09-01',
+        ]);
+        $movimiento = MovimientoCaja::create([
+            'fecha' => '2026-09-01',
+            'motivo' => 'PAGO RENDIMIENTOS',
+            'tipo' => 'Egreso',
+            'monto' => 4250,
+            'categoria' => 'RENDIMIENTOS',
+            'referencia' => $referencia,
+        ]);
+
+        app(FlujoCajaService::class)->eliminar($movimiento);
+
+        $this->assertDatabaseMissing('movimientos_caja', ['id' => $movimiento->id]);
+        $this->assertDatabaseMissing('gastos_operativos', ['id' => $gasto->id]);
+        $this->assertDatabaseMissing('movimientos_capital', ['referencia' => $referencia]);
     }
 }

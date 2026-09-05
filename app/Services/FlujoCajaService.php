@@ -113,12 +113,21 @@ class FlujoCajaService
     /** Elimina un movimiento manual o importado y recalcula los saldos posteriores. */
     public function eliminar(MovimientoCaja $movimiento): void
     {
-        if ($movimiento->pago_id || str_starts_with((string) $movimiento->referencia, 'GASTO-') || str_starts_with((string) $movimiento->referencia, 'DESEMBOLSO-')) {
+        $esRendimientoRegistradoComoGasto = str_starts_with((string) $movimiento->referencia, 'GASTO-')
+            && str_starts_with(mb_strtoupper((string) $movimiento->categoria), 'RENDIMIENTO');
+
+        if ($movimiento->pago_id || str_starts_with((string) $movimiento->referencia, 'DESEMBOLSO-') || (str_starts_with((string) $movimiento->referencia, 'GASTO-') && ! $esRendimientoRegistradoComoGasto)) {
             throw new \InvalidArgumentException('Este movimiento se genera automáticamente. Elimínalo desde el pago, gasto o desembolso de origen.');
         }
 
         DB::transaction(function () use ($movimiento) {
             $fecha = $movimiento->fecha->format('Y-m-d');
+
+            if (str_starts_with((string) $movimiento->referencia, 'GASTO-')) {
+                GastoOperativo::whereKey((int) substr((string) $movimiento->referencia, strlen('GASTO-')))->delete();
+                \App\Models\MovimientoCapital::where('referencia', $movimiento->referencia)->delete();
+            }
+
             $movimiento->delete();
             $this->recalcularSaldosDesde($fecha);
         });
