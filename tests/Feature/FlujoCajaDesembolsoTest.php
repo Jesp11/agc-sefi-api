@@ -85,4 +85,57 @@ class FlujoCajaDesembolsoTest extends TestCase
             'monto' => 1400.00,
         ]);
     }
+
+    public function test_deleting_a_manual_movement_recalculates_following_balances(): void
+    {
+        $saldoInicial = MovimientoCaja::create([
+            'fecha' => '2026-09-01',
+            'motivo' => 'Saldo inicial',
+            'tipo' => 'Ingreso',
+            'monto' => 100,
+            'saldo_resultante' => 100,
+            'categoria' => 'SaldoInicial',
+        ]);
+        $movimientoErroneo = MovimientoCaja::create([
+            'fecha' => '2026-09-02',
+            'motivo' => 'Ingreso capturado por error',
+            'tipo' => 'Ingreso',
+            'monto' => 50,
+            'saldo_resultante' => 150,
+        ]);
+        $egresoPosterior = MovimientoCaja::create([
+            'fecha' => '2026-09-03',
+            'motivo' => 'Compra posterior',
+            'tipo' => 'Egreso',
+            'monto' => 20,
+            'saldo_resultante' => 130,
+        ]);
+
+        app(FlujoCajaService::class)->eliminar($movimientoErroneo);
+
+        $this->assertDatabaseMissing('movimientos_caja', ['id' => $movimientoErroneo->id]);
+        $this->assertDatabaseHas('movimientos_caja', [
+            'id' => $saldoInicial->id,
+            'saldo_resultante' => 100.00,
+        ]);
+        $this->assertDatabaseHas('movimientos_caja', [
+            'id' => $egresoPosterior->id,
+            'saldo_resultante' => 80.00,
+        ]);
+    }
+
+    public function test_deleting_an_automatic_movement_is_not_allowed(): void
+    {
+        $movimiento = MovimientoCaja::create([
+            'fecha' => '2026-09-01',
+            'motivo' => 'Gasto operativo',
+            'tipo' => 'Egreso',
+            'monto' => 100,
+            'referencia' => 'GASTO-1',
+        ]);
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        app(FlujoCajaService::class)->eliminar($movimiento);
+    }
 }

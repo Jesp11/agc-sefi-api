@@ -21,4 +21,9 @@ class GastoOperativo extends Model
     {
         return $this->belongsTo(CatalogoGasto::class, 'catalogo_gasto_id');
     }
+
+    public function registradoPor()
+    {
+        return $this->belongsTo(User::class, 'registrado_por');
+    }
 }

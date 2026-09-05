@@ -58,6 +58,17 @@ class FlujoCajaController extends Controller
         ]);
     }
 
+    public function destroy(MovimientoCaja $movimiento)
+    {
+        try {
+            $this->service->eliminar($movimiento);
+        } catch (\InvalidArgumentException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+
+        return response()->json(['message' => 'Movimiento eliminado']);
+    }
+
     public function cuentas()
     {
         return response()->json(['cuentas' => FlujoCajaService::CUENTAS]);

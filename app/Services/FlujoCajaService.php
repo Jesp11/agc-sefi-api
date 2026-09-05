@@ -79,8 +79,14 @@ class FlujoCajaService
     /** Edita un movimiento manual o importado y recalcula el saldo posterior. */
     public function actualizar(MovimientoCaja $movimiento, array $data): MovimientoCaja
     {
-        if ($movimiento->pago_id || str_starts_with((string) $movimiento->referencia, 'GASTO-') || str_starts_with((string) $movimiento->referencia, 'DESEMBOLSO-')) {
-            throw new \InvalidArgumentException('Este movimiento se genera desde un pago, gasto o desembolso. Corrige el registro de origen para conservar la caja sincronizada.');
+        if ($movimiento->pago_id || str_starts_with((string) $movimiento->referencia, 'DESEMBOLSO-')) {
+            throw new \InvalidArgumentException('Este movimiento se genera desde un pago o desembolso. Corrige el registro de origen para conservar la caja sincronizada.');
+        }
+
+        if (str_starts_with((string) $movimiento->referencia, 'GASTO-')) {
+            $movimiento->update(['id_asesor' => $data['id_asesor'] ?? null]);
+
+            return $movimiento->fresh(['asesor', 'registradoPor']);
         }
 
         return DB::transaction(function () use ($movimiento, $data) {
@@ -101,6 +107,20 @@ class FlujoCajaService
             $this->recalcularSaldosDesde(min($fechaAnterior, $data['fecha']));
 
             return $movimiento->fresh(['asesor', 'credito.cliente', 'credito.grupo']);
+        });
+    }
+
+    /** Elimina un movimiento manual o importado y recalcula los saldos posteriores. */
+    public function eliminar(MovimientoCaja $movimiento): void
+    {
+        if ($movimiento->pago_id || str_starts_with((string) $movimiento->referencia, 'GASTO-') || str_starts_with((string) $movimiento->referencia, 'DESEMBOLSO-')) {
+            throw new \InvalidArgumentException('Este movimiento se genera automáticamente. Elimínalo desde el pago, gasto o desembolso de origen.');
+        }
+
+        DB::transaction(function () use ($movimiento) {
+            $fecha = $movimiento->fecha->format('Y-m-d');
+            $movimiento->delete();
+            $this->recalcularSaldosDesde($fecha);
         });
     }
 
@@ -140,6 +160,7 @@ class FlujoCajaService
 
         return $this->registrar([
             'fecha' => $gasto->fecha->format('Y-m-d'),
+            'id_asesor' => $gasto->registradoPor?->id_asesor,
             'motivo' => $gasto->concepto,
             'tipo' => 'Egreso',
             'monto' => $gasto->monto,
@@ -261,7 +282,7 @@ class FlujoCajaService
 
     public function listar(?int $mes = null, ?int $anio = null, ?string $tipo = null)
     {
-        $query = MovimientoCaja::with(['asesor', 'credito.cliente', 'credito.grupo'])
+        $query = MovimientoCaja::with(['asesor', 'registradoPor', 'credito.cliente', 'credito.grupo'])
             ->orderByDesc('fecha')
             ->orderByDesc('id');
 
@@ -346,10 +367,17 @@ class FlujoCajaService
         $mora = Credito::where('estado', 'EnMora')->sum('saldo_pendiente');
         $ahorroPersonal = AhorroPersonal::sum('saldo');
         $ahorroGrupal = AhorroSocio::sum('saldo');
-        $gastosOperativos = round((float) $movimientosMes
+        $gastosOperativos = GastoOperativo::whereYear('fecha', $anio)
+            ->whereMonth('fecha', $mes)
+            ->sum('monto');
+        $rendimientosInversionistas = $movimientosMes
             ->where('tipo', 'Egreso')
-            ->where('categoria', 'GastoOperativo')
-            ->sum('monto'), 2);
+            ->where('categoria', 'Rendimiento')
+            ->sum('monto');
+        $nomina = $movimientosMes
+            ->where('tipo', 'Egreso')
+            ->where('categoria', 'Nomina')
+            ->sum('monto');
 
         return [
             'anio' => $anio,
@@ -361,7 +389,9 @@ class FlujoCajaService
             'saldo_anterior' => round((float) ($saldoAnterior ?? 0), 2),
             'saldo_actual' => round((float) ($ultimoDelMes?->saldo_resultante ?? $disponible), 2),
             'disponible' => $disponible,
-            'gastos_operativos' => $gastosOperativos,
+            'gastos_operativos' => round((float) $gastosOperativos, 2),
+            'rendimientos_inversionistas' => round((float) $rendimientosInversionistas, 2),
+            'nomina' => round((float) $nomina, 2),
             'distribucion_cuentas' => [
                 'ingresos' => $distribucionIngresos,
                 'egresos' => $distribucionEgresos,
