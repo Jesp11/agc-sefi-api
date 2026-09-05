@@ -26,6 +26,7 @@ class Credito extends Model
         'interes',
         'total',
         'saldo_pendiente',
+        'abonos_historicos',
         'plazos',
         'valor_ficha',
         'dias_pago',
@@ -52,6 +53,7 @@ class Credito extends Model
         'es_adicional' => 'boolean',
         'comision_apertura' => 'decimal:2',
         'saldo_pendiente' => 'decimal:2',
+        'abonos_historicos' => 'decimal:2',
         'abono_recuperacion' => 'decimal:2',
     ];
 

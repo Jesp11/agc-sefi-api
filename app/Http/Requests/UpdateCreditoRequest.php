@@ -33,6 +33,7 @@ class UpdateCreditoRequest extends FormRequest
             'interes' => 'sometimes|numeric|min:0',
             'total' => 'sometimes|numeric|min:0',
             'saldo_pendiente' => 'sometimes|nullable|numeric|min:0',
+            'abonos_historicos' => 'sometimes|nullable|numeric|min:0',
             'plazos' => 'sometimes|integer|min:1',
             'valor_ficha' => 'sometimes|numeric|min:0',
             'dias_pago' => 'sometimes|string|max:255',

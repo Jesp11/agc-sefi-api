@@ -65,11 +65,12 @@ class MoraCalculationService
         $multas = $pagos->where('tipo', 'Multa');
 
         // Solo abonos liquidan el préstamo. Las multas van al asesor y no afectan el saldo.
-        $totalAbonado = (float) $abonos->sum('monto');
+        $abonosHistoricos = max(0, (float) ($credito->abonos_historicos ?? 0));
+        $totalAbonado = (float) $abonos->sum('monto') + $abonosHistoricos;
         $totalMultas = (float) $multas->sum('monto');
         $saldoImportado = $this->resolveImportedSaldo($credito);
 
-        if ($abonos->isEmpty() && $saldoImportado !== null) {
+        if ($abonos->isEmpty() && $abonosHistoricos <= 0 && $saldoImportado !== null) {
             $saldoPendiente = max(0, $saldoImportado);
             $totalAbonado = max(0, round((float) $credito->total - $saldoPendiente, 2));
         } else {
