@@ -47,14 +47,16 @@ class RefinanciamientoService
             $mora = $this->moraService->calculate($creditoAnterior->load('pagos'));
             // Las multas no forman parte del saldo del préstamo (van al asesor).
             $saldoAnterior = (float) $mora['saldo_actual'];
+            $comisionApertura = round((float) ($data['comision_apertura'] ?? 100.00), 2);
 
             $montoOtorgado = (float) $data['monto_otorgado'];
-            if ($montoOtorgado < $saldoAnterior) {
-                throw new InvalidArgumentException('El nuevo monto no puede ser menor al saldo que se absorberá.');
+            if ($montoOtorgado < $saldoAnterior + $comisionApertura) {
+                throw new InvalidArgumentException('El nuevo monto debe cubrir el saldo absorbido y la comisión de apertura.');
             }
 
             $deduccion = $saldoAnterior;
-            $montoNeto = round($montoOtorgado - $deduccion, 2);
+            // La comisión se descuenta del efectivo entregado, igual que en un crédito nuevo.
+            $montoNeto = round($montoOtorgado - $deduccion - $comisionApertura, 2);
             $interes = (float) ($data['interes'] ?? 0);
             $total = (float) $data['total'];
             $plazos = (int) $data['plazos'];
@@ -81,7 +83,7 @@ class RefinanciamientoService
                 'dias_pago' => $data['dias_pago'] ?? $creditoAnterior->dias_pago,
                 'tipo_credito' => $creditoAnterior->tipo_credito,
                 'estado' => 'Activo',
-                'comision_apertura' => $data['comision_apertura'] ?? 100.00,
+                'comision_apertura' => $comisionApertura,
                 'credito_padre_id' => $creditoAnterior->num_prog,
                 'tasa_asignada' => $data['tasa_asignada'] ?? $creditoAnterior->tasa_asignada,
                 'porcentaje_interes' => $data['porcentaje_interes'] ?? $creditoAnterior->porcentaje_interes,
