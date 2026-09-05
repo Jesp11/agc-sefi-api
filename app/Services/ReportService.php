@@ -90,6 +90,34 @@ class ReportService
         $totalAbonosRegistrados = round((float) $pagos->where('tipo', 'Abono')->sum('monto'), 2);
         $montoColocado = round((float) $creditos->sum('monto_otorgado'), 2);
 
+        $renovacionesDelDia = Refinanciamiento::with([
+            'creditoAnterior.cliente', 'creditoAnterior.grupo', 'creditoAnterior.asesor',
+            'creditoNuevo.cliente', 'creditoNuevo.grupo', 'creditoNuevo.asesor',
+        ])
+            ->whereDate('fecha_efectiva', $fecha)
+            ->when($idAsesor, fn ($q) => $q->whereHas('creditoNuevo', fn ($cq) => $cq->where('id_asesor', $idAsesor)))
+            ->orderBy('id')
+            ->get()
+            ->map(function (Refinanciamiento $renovacion) {
+                $nuevo = $renovacion->creditoNuevo;
+
+                return [
+                    'id' => $renovacion->id,
+                    'num_prog_anterior' => $renovacion->num_prog_anterior,
+                    'num_prog_nuevo' => $renovacion->num_prog_nuevo,
+                    'fecha_efectiva' => $renovacion->fecha_efectiva?->toDateString(),
+                    'saldo_absorbido' => (float) $renovacion->deduccion,
+                    'comision_apertura' => (float) ($nuevo?->comision_apertura ?? 0),
+                    'monto_neto' => (float) $renovacion->monto_neto,
+                    'plazos' => $nuevo?->plazos,
+                    'cliente' => $nuevo?->cliente?->nombre_completo ?? $nuevo?->grupo?->nombre_grupo,
+                    'cliente_id' => $nuevo?->id_cliente,
+                    'grupo_id' => $nuevo?->id_grupo,
+                    'id_asesor' => $nuevo?->id_asesor,
+                    'gestor' => $nuevo?->asesor?->nombre_asesor,
+                ];
+            })->values();
+
         $payload = [
             'fecha' => $fecha,
             'dia_semana' => $cobrosDelDiaData['dia_semana'] ?? null,
@@ -102,30 +130,7 @@ class ReportService
             'pagos' => $pagos->values(),
             'creditos' => $creditos,
             'cobros_programados' => $cobrosProgramados->values(),
-            'renovaciones_del_dia' => Refinanciamiento::with([
-                'creditoAnterior.cliente', 'creditoAnterior.grupo', 'creditoAnterior.asesor',
-                'creditoNuevo.cliente', 'creditoNuevo.grupo', 'creditoNuevo.asesor',
-            ])
-                ->whereDate('fecha_efectiva', $fecha)
-                ->when($idAsesor, fn ($q) => $q->whereHas('creditoNuevo', fn ($cq) => $cq->where('id_asesor', $idAsesor)))
-                ->orderBy('id')
-                ->get()
-                ->map(function (Refinanciamiento $renovacion) {
-                    $nuevo = $renovacion->creditoNuevo;
-                    return [
-                        'id' => $renovacion->id,
-                        'num_prog_anterior' => $renovacion->num_prog_anterior,
-                        'num_prog_nuevo' => $renovacion->num_prog_nuevo,
-                        'fecha_efectiva' => $renovacion->fecha_efectiva?->toDateString(),
-                        'saldo_absorbido' => (float) $renovacion->deduccion,
-                        'monto_neto' => (float) $renovacion->monto_neto,
-                        'plazos' => $nuevo?->plazos,
-                        'cliente' => $nuevo?->cliente?->nombre_completo ?? $nuevo?->grupo?->nombre_grupo,
-                        'cliente_id' => $nuevo?->id_cliente,
-                        'grupo_id' => $nuevo?->id_grupo,
-                        'gestor' => $nuevo?->asesor?->nombre_asesor,
-                    ];
-                })->values(),
+            'renovaciones_del_dia' => $renovacionesDelDia,
         ];
 
         if ($idAsesor) {
@@ -135,6 +140,7 @@ class ReportService
                 ->concat($pagos->pluck('credito.id_asesor'))
                 ->concat($cobrosProgramados->pluck('asesor.id'))
                 ->concat($creditos->pluck('id_asesor'))
+                ->concat($renovacionesDelDia->pluck('id_asesor'))
                 ->filter()
                 ->unique()
                 ->values();
@@ -152,8 +158,14 @@ class ReportService
                 $progDelDia = round((float) $cobrosAsesor->where('categoria', 'del_dia')->sum('monto_a_cobrar'), 2);
                 $progAtrasado = round((float) $cobrosAsesor->where('categoria', 'atrasado')->sum('monto_a_cobrar'), 2);
                 $progTotal = round((float) $cobrosAsesor->sum('monto_a_cobrar'), 2);
-
-                $aRecibir = max($cobrado, $progTotal);
+                $comisionesRenovacion = round((float) $renovacionesDelDia
+                    ->where('id_asesor', (int) $aid)
+                    ->sum('comision_apertura'), 2);
+                $aRecibirBruto = max($cobrado, $progTotal);
+                // La comisión se descuenta del efectivo de la renovación. La
+                // operación la realiza gerencia, así que no es un faltante ni
+                // un abono que el gestor responsable deba entregar.
+                $aRecibir = max(0, round($aRecibirBruto - $comisionesRenovacion, 2));
 
                 $porAsesor[] = [
                     'id_asesor' => (int) $aid,
@@ -167,6 +179,8 @@ class ReportService
                     'num_del_dia' => $cobrosAsesor->where('categoria', 'del_dia')->count(),
                     'monto_programado' => $progTotal,
                     'monto_exigible' => $progTotal,
+                    'a_recibir_bruto' => $aRecibirBruto,
+                    'comisiones_renovacion' => $comisionesRenovacion,
                     'a_recibir' => $aRecibir,
                     'creditos_otorgados' => $creditosAsesor->count(),
                     'monto_colocado' => round((float) $creditosAsesor->sum('monto_otorgado'), 2),
@@ -343,8 +357,8 @@ class ReportService
             $abonos = $credito->pagos
                 ->filter(fn (Pago $pago) => $pago->tipo === 'Abono')
                 ->sort(function (Pago $a, Pago $b) {
-                    $fechaA = ($a->fecha?->format('Y-m-d') ?? '0000-00-00') . ' ' . ($a->hora ?? '00:00:00');
-                    $fechaB = ($b->fecha?->format('Y-m-d') ?? '0000-00-00') . ' ' . ($b->hora ?? '00:00:00');
+                    $fechaA = ($a->fecha?->format('Y-m-d') ?? '0000-00-00').' '.($a->hora ?? '00:00:00');
+                    $fechaB = ($b->fecha?->format('Y-m-d') ?? '0000-00-00').' '.($b->hora ?? '00:00:00');
 
                     return $fechaA <=> $fechaB ?: ((int) $a->id <=> (int) $b->id);
                 })->values();
@@ -454,15 +468,15 @@ class ReportService
         } else {
             $query->where(function ($q) {
                 $q->where(function ($closed) {
-                        $closed->whereIn('estado', ['CerradoSinRenovacion', 'Finalizado'])
-                            ->where(function ($history) {
-                                $history->whereNotNull('ciclo_inicio_mora')
-                                    ->orWhere('dias_mora_cache', '>', 0);
-                            });
-                    })->orWhere(function ($imported) {
-                        $imported->where('estado', 'EnMora')
-                            ->where('tabla_amortizacion', 'like', '%"mora_clasificacion": "mora_muerta"%');
-                    });
+                    $closed->whereIn('estado', ['CerradoSinRenovacion', 'Finalizado'])
+                        ->where(function ($history) {
+                            $history->whereNotNull('ciclo_inicio_mora')
+                                ->orWhere('dias_mora_cache', '>', 0);
+                        });
+                })->orWhere(function ($imported) {
+                    $imported->where('estado', 'EnMora')
+                        ->where('tabla_amortizacion', 'like', '%"mora_clasificacion": "mora_muerta"%');
+                });
             });
         }
 
@@ -525,14 +539,14 @@ class ReportService
         foreach ($creditos as $credito) {
             $valorFicha = (float) ($credito->valor_ficha ?? 0);
             $plazos = (int) ($credito->plazos ?? 0);
-            if ($valorFicha <= 0 || $plazos <= 0 || !$credito->fecha_primer_pago) {
+            if ($valorFicha <= 0 || $plazos <= 0 || ! $credito->fecha_primer_pago) {
                 continue;
             }
 
             $mora = $this->moraService->calculate($credito);
             $saldo = (float) $mora['saldo_actual'];
 
-            if ($saldo <= 0 || !empty($mora['en_mora'])) {
+            if ($saldo <= 0 || ! empty($mora['en_mora'])) {
                 continue;
             }
 
@@ -556,12 +570,12 @@ class ReportService
                 }
             }
 
-            if (!$fechaUltimoAbono || $pagosRestantes < 1 || $pagosRestantes > 6) {
+            if (! $fechaUltimoAbono || $pagosRestantes < 1 || $pagosRestantes > 6) {
                 continue;
             }
 
             $fecha = Carbon::parse($fechaUltimoAbono);
-            $fechaTermino = !empty($schedule) ? end($schedule)['fecha'] : null;
+            $fechaTermino = ! empty($schedule) ? end($schedule)['fecha'] : null;
             $data = $credito->toArray();
             unset($data['pagos']);
 
@@ -585,6 +599,7 @@ class ReportService
             if ($cmp !== 0) {
                 return $cmp;
             }
+
             return strcmp($a['fecha_termino'] ?? '', $b['fecha_termino'] ?? '');
         });
 
@@ -627,6 +642,7 @@ class ReportService
             ->map(function ($inv) {
                 $aportado = $inv->aportaciones->where('tipo', 'Aportacion')->sum('monto')
                     - $inv->aportaciones->where('tipo', 'Retiro')->sum('monto');
+
                 return array_merge($inv->toArray(), ['total_aportado' => round((float) $aportado, 2)]);
             });
 
@@ -1139,6 +1155,7 @@ class ReportService
 
         $accionistas = collect($this->accionistasConfigurados())->map(function (array $row) use ($valorBruto, $valorNeto, $adeudosTotal) {
             $porcentaje = (float) $row['porcentaje'];
+
             return [
                 'nombre' => $row['nombre'],
                 'porcentaje' => round($porcentaje * 100, 2),
@@ -1228,18 +1245,18 @@ class ReportService
             ->where('clave', 'accionistas_participacion')
             ->first();
 
-        if (!$row) {
+        if (! $row) {
             return self::ACCIONISTAS_DEFAULT;
         }
 
         $decoded = json_decode((string) $row->valor, true);
-        if (!is_array($decoded)) {
+        if (! is_array($decoded)) {
             return self::ACCIONISTAS_DEFAULT;
         }
 
         $rows = collect($decoded)
             ->map(function ($item) {
-                if (!is_array($item)) {
+                if (! is_array($item)) {
                     return null;
                 }
 
@@ -1419,7 +1436,7 @@ class ReportService
             }
 
             $nextRef = $this->incrementExcelColumn($ref);
-            if ($nextRef === null || !array_key_exists($nextRef, $cells)) {
+            if ($nextRef === null || ! array_key_exists($nextRef, $cells)) {
                 continue;
             }
 
@@ -1434,7 +1451,7 @@ class ReportService
 
     private function readWorkbookSheetCells(string $path, string $sheetName): array
     {
-        $zip = new ZipArchive();
+        $zip = new ZipArchive;
         if ($zip->open($path) !== true) {
             return [];
         }
@@ -1532,7 +1549,7 @@ class ReportService
         $rels->registerXPathNamespace('pr', 'http://schemas.openxmlformats.org/package/2006/relationships');
         foreach ($rels->xpath('//pr:Relationship') ?: [] as $relationship) {
             if ((string) ($relationship['Id'] ?? '') === $relId) {
-                return 'xl/' . ltrim((string) ($relationship['Target'] ?? ''), '/');
+                return 'xl/'.ltrim((string) ($relationship['Target'] ?? ''), '/');
             }
         }
 
@@ -1541,7 +1558,7 @@ class ReportService
 
     private function incrementExcelColumn(string $cellRef): ?string
     {
-        if (!preg_match('/^([A-Z]+)(\d+)$/', $cellRef, $matches)) {
+        if (! preg_match('/^([A-Z]+)(\d+)$/', $cellRef, $matches)) {
             return null;
         }
 
@@ -1563,10 +1580,10 @@ class ReportService
         }
 
         if ($carry === 1) {
-            $column = 'A' . $column;
+            $column = 'A'.$column;
         }
 
-        return $column . $row;
+        return $column.$row;
     }
 
     private function normalizeExcelNumber(mixed $value): ?float
@@ -1580,6 +1597,7 @@ class ReportService
         }
 
         $normalized = str_replace([',', '$', ' '], '', (string) $value);
+
         return is_numeric($normalized) ? round((float) $normalized, 2) : null;
     }
 
@@ -1682,7 +1700,7 @@ class ReportService
 
         $matches = [];
         foreach ($cells as $ref => $value) {
-            if (!preg_match('/^([A-Z]+)(\d+)$/', $ref, $parts)) {
+            if (! preg_match('/^([A-Z]+)(\d+)$/', $ref, $parts)) {
                 continue;
             }
 
@@ -1691,7 +1709,7 @@ class ReportService
             }
 
             $nextRef = $this->incrementExcelColumn($ref);
-            if ($nextRef === null || !array_key_exists($nextRef, $cells)) {
+            if ($nextRef === null || ! array_key_exists($nextRef, $cells)) {
                 continue;
             }
 
@@ -1744,6 +1762,7 @@ class ReportService
     {
         $tabla = $credito->tabla_amortizacion;
         $json = is_string($tabla) ? $tabla : json_encode($tabla, JSON_UNESCAPED_UNICODE);
+
         return is_string($json) && str_contains($json, '"mora_clasificacion":"mora_muerta"')
             || is_string($json) && str_contains($json, '"mora_clasificacion": "mora_muerta"');
     }
@@ -1798,7 +1817,7 @@ class ReportService
         }
 
         try {
-            $sheetNames = ['CIERRE DE ' . mb_strtoupper($corte->locale('es')->isoFormat('MMMM')), 'CIERRE', 'Sheet1'];
+            $sheetNames = ['CIERRE DE '.mb_strtoupper($corte->locale('es')->isoFormat('MMMM')), 'CIERRE', 'Sheet1'];
             $cells = [];
             foreach ($sheetNames as $name) {
                 $cells = $this->readWorkbookSheetCells($path, $name);
@@ -1808,7 +1827,7 @@ class ReportService
             }
 
             if ($cells === []) {
-                $zip = new ZipArchive();
+                $zip = new ZipArchive;
                 if ($zip->open($path) === true) {
                     $workbookXml = $zip->getFromName('xl/workbook.xml');
                     if ($workbookXml !== false) {
@@ -1839,7 +1858,7 @@ class ReportService
                 }
 
                 $nextRef = $this->incrementExcelColumn($ref);
-                if ($nextRef === null || !array_key_exists($nextRef, $cells)) {
+                if ($nextRef === null || ! array_key_exists($nextRef, $cells)) {
                     continue;
                 }
 
@@ -1868,7 +1887,7 @@ class ReportService
         }
 
         try {
-            $sheetNames = ['CIERRE DE ' . mb_strtoupper($corte->locale('es')->isoFormat('MMMM')), 'CIERRE', 'Sheet1'];
+            $sheetNames = ['CIERRE DE '.mb_strtoupper($corte->locale('es')->isoFormat('MMMM')), 'CIERRE', 'Sheet1'];
             $cells = [];
             foreach ($sheetNames as $name) {
                 $cells = $this->readWorkbookSheetCells($path, $name);
@@ -1878,7 +1897,7 @@ class ReportService
             }
 
             if ($cells === []) {
-                $zip = new ZipArchive();
+                $zip = new ZipArchive;
                 if ($zip->open($path) === true) {
                     $workbookXml = $zip->getFromName('xl/workbook.xml');
                     if ($workbookXml !== false) {
@@ -1920,31 +1939,31 @@ class ReportService
 
             $headerRow = $distRow + 1;
             $colResp = $distCol;
-            $colAntRef = $this->incrementExcelColumn($colResp . $headerRow);
+            $colAntRef = $this->incrementExcelColumn($colResp.$headerRow);
             if ($colAntRef === null) {
                 return null;
             }
             preg_match('/^([A-Z]+)(\d+)$/', $colAntRef, $m);
             $colAnt = $m[1];
 
-            $colActRef = $this->incrementExcelColumn($colAnt . $headerRow);
+            $colActRef = $this->incrementExcelColumn($colAnt.$headerRow);
             if ($colActRef === null) {
                 return null;
             }
             preg_match('/^([A-Z]+)(\d+)$/', $colActRef, $m);
             $colAct = $m[1];
 
-            $labelAnt = trim((string) ($cells[$colAnt . $headerRow] ?? 'CLIENT/ANT'));
-            $labelAct = trim((string) ($cells[$colAct . $headerRow] ?? 'CLIENT/ACT'));
+            $labelAnt = trim((string) ($cells[$colAnt.$headerRow] ?? 'CLIENT/ANT'));
+            $labelAct = trim((string) ($cells[$colAct.$headerRow] ?? 'CLIENT/ACT'));
 
             $registros = [];
             $totalAnt = null;
             $totalAct = null;
 
             for ($row = $headerRow + 1; $row <= $headerRow + 25; $row++) {
-                $resp = trim((string) ($cells[$colResp . $row] ?? ''));
-                $antVal = $this->normalizeExcelNumber($cells[$colAnt . $row] ?? null);
-                $actVal = $this->normalizeExcelNumber($cells[$colAct . $row] ?? null);
+                $resp = trim((string) ($cells[$colResp.$row] ?? ''));
+                $antVal = $this->normalizeExcelNumber($cells[$colAnt.$row] ?? null);
+                $actVal = $this->normalizeExcelNumber($cells[$colAct.$row] ?? null);
 
                 if ($resp === '' && $antVal === null && $actVal === null) {
                     break;
@@ -2125,7 +2144,7 @@ class ReportService
                     'aportaciones_mes' => round((float) $aportacionesMes, 2),
                     'retiros_mes' => round((float) $retirosMes, 2),
                     'es_fondeo_externo' => ($inv->tipo_entidad && $inv->tipo_entidad !== 'Persona Fisica')
-                        || !empty($inv->origen_fondeo),
+                        || ! empty($inv->origen_fondeo),
                 ];
             })
             ->values();
@@ -2147,7 +2166,7 @@ class ReportService
             $inversionista->origen_fondeo,
             "INV-{$inversionista->id}",
         ])
-            ->filter(fn ($value) => !empty($value))
+            ->filter(fn ($value) => ! empty($value))
             ->map(fn ($value) => mb_strtoupper((string) $value))
             ->values();
 
@@ -2173,7 +2192,7 @@ class ReportService
         $mesesNombres = [
             1 => 'Enero', 2 => 'Febrero', 3 => 'Marzo', 4 => 'Abril',
             5 => 'Mayo', 6 => 'Junio', 7 => 'Julio', 8 => 'Agosto',
-            9 => 'Septiembre', 10 => 'Octubre', 11 => 'Noviembre', 12 => 'Diciembre'
+            9 => 'Septiembre', 10 => 'Octubre', 11 => 'Noviembre', 12 => 'Diciembre',
         ];
 
         $currentYear = (int) date('Y');
@@ -2184,17 +2203,17 @@ class ReportService
             'asesor:id,nombre_asesor',
             'creditos' => function ($q) {
                 $q->select('num_prog', 'id_cliente', 'tipo_credito', 'monto_otorgado', 'saldo_pendiente', 'total', 'estado')
-                  ->where('estado', 'Activo');
+                    ->where('estado', 'Activo');
             },
-            'grupos:id,nombre_grupo'
+            'grupos:id,nombre_grupo',
         ]);
 
         if ($idAsesor) {
             $query->where(function ($q) use ($idAsesor) {
                 $q->where('id_asesor', $idAsesor)
-                  ->orWhereHas('creditos', function ($cq) use ($idAsesor) {
-                      $cq->where('id_asesor', $idAsesor);
-                  });
+                    ->orWhereHas('creditos', function ($cq) use ($idAsesor) {
+                        $cq->where('id_asesor', $idAsesor);
+                    });
             });
         }
 
@@ -2211,7 +2230,7 @@ class ReportService
             $anioNac = null;
 
             // 1. Intentar desde fecha_nacimiento
-            if (!empty($cliente->fecha_nacimiento)) {
+            if (! empty($cliente->fecha_nacimiento)) {
                 $fechaStr = (string) $cliente->fecha_nacimiento;
                 if (preg_match('/^(\d{4})-(\d{2})-(\d{2})/', $fechaStr, $matches)) {
                     $anioNac = (int) $matches[1];
@@ -2221,7 +2240,7 @@ class ReportService
             }
 
             // 2. Si no, intentar extraer de la CURP (posiciones 4-9: AAMMDD)
-            if ((!$mesCliente || !$dia) && !empty($cliente->curp) && strlen(trim($cliente->curp)) >= 10) {
+            if ((! $mesCliente || ! $dia) && ! empty($cliente->curp) && strlen(trim($cliente->curp)) >= 10) {
                 $curp = strtoupper(trim($cliente->curp));
                 $aa = substr($curp, 4, 2);
                 $mm = substr($curp, 6, 2);

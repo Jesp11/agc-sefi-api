@@ -198,17 +198,15 @@ class FlujoCajaService
 
     public function recalcularSaldosDesde(string $fechaInicio): void
     {
-        $saldo = 0.0;
-        $prevFecha = null;
-
-        $anteriores = MovimientoCaja::where('fecha', '<', $fechaInicio)
-            ->orderBy('fecha')
-            ->orderBy('id')
-            ->get();
-
-        foreach ($anteriores as $mov) {
-            $saldo = $this->aplicarMovimiento($saldo, $mov);
-        }
+        // Los saldos de los meses históricos provienen de los libros de caja.
+        // Partir de cero y volver a sumar todo el histórico puede invalidar ese
+        // cierre al capturar un movimiento nuevo. Se usa el último saldo ya
+        // confirmado anterior a la fecha afectada como saldo de apertura.
+        $saldo = (float) (MovimientoCaja::where('fecha', '<', $fechaInicio)
+            ->whereNotNull('saldo_resultante')
+            ->orderByDesc('fecha')
+            ->orderByDesc('id')
+            ->value('saldo_resultante') ?? 0);
 
         $pendientes = MovimientoCaja::where('fecha', '>=', $fechaInicio)
             ->orderBy('fecha')
