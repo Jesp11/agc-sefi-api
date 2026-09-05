@@ -117,7 +117,7 @@ class CreditoController extends Controller
 
         $credito = Credito::create($data);
         $this->cicloService->registrarInicio($credito);
-        $this->flujoCajaService->registrarDesdeDesembolso($credito, (float) $credito->monto_otorgado);
+        $this->flujoCajaService->registrarDesdeDesembolso($credito, $this->montoNetoDesembolsado($credito));
 
         return response()->json([
             'message' => 'Crédito creado exitosamente',
@@ -153,6 +153,7 @@ class CreditoController extends Controller
         $credito = Credito::findOrFail($id);
         $data = $request->validated();
         $montoOtorgadoAnterior = (float) $credito->monto_otorgado;
+        $comisionAperturaAnterior = (float) ($credito->comision_apertura ?? 0);
 
         if (isset($data['id_cliente'])) {
             $cliente = Cliente::findOrFail($data['id_cliente']);
@@ -170,14 +171,17 @@ class CreditoController extends Controller
 
         $montoOtorgadoCambio = array_key_exists('monto_otorgado', $data)
             && abs($montoOtorgadoAnterior - (float) $credito->monto_otorgado) >= 0.005;
+        $comisionAperturaCambio = array_key_exists('comision_apertura', $data)
+            && abs($comisionAperturaAnterior - (float) ($credito->comision_apertura ?? 0)) >= 0.005;
+        $montoNetoDesembolsado = $this->montoNetoDesembolsado($credito);
 
-        if ($montoOtorgadoCambio) {
-            $this->flujoCajaService->sincronizarDesembolso($credito);
+        if ($montoOtorgadoCambio || $comisionAperturaCambio) {
+            $this->flujoCajaService->sincronizarDesembolso($credito, $montoNetoDesembolsado);
         } else {
             // Al guardar un crédito histórico, crea el egreso que faltaba.
             // registrarDesdeDesembolso es idempotente por referencia, por lo
             // que un movimiento existente no se duplica ni se modifica.
-            $this->flujoCajaService->registrarDesdeDesembolso($credito, (float) $credito->monto_otorgado);
+            $this->flujoCajaService->registrarDesdeDesembolso($credito, $montoNetoDesembolsado);
         }
 
         if (isset($data['abono_recuperacion'])) {
@@ -197,5 +201,10 @@ class CreditoController extends Controller
         return response()->json([
             'message' => 'Crédito eliminado exitosamente',
         ]);
+    }
+
+    private function montoNetoDesembolsado(Credito $credito): float
+    {
+        return max(0, (float) $credito->monto_otorgado - (float) ($credito->comision_apertura ?? 0));
     }
 }

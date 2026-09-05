@@ -39,6 +39,7 @@ class FlujoCajaDesembolsoTest extends TestCase
             $table->unsignedBigInteger('id_asesor')->nullable();
             $table->date('fecha_otorgacion');
             $table->decimal('monto_otorgado', 12, 2);
+            $table->decimal('comision_apertura', 12, 2)->nullable();
             $table->timestamps();
         });
 
@@ -68,19 +69,20 @@ class FlujoCajaDesembolsoTest extends TestCase
             'id_asesor' => 1,
             'fecha_otorgacion' => '2026-09-05',
             'monto_otorgado' => 1000,
+            'comision_apertura' => 100,
         ]);
         $flujoCaja = app(FlujoCajaService::class);
 
-        $flujoCaja->registrarDesdeDesembolso($credito, 1000);
+        $flujoCaja->registrarDesdeDesembolso($credito, 900);
         $credito->update(['monto_otorgado' => 1500]);
-        $flujoCaja->sincronizarDesembolso($credito);
+        $flujoCaja->sincronizarDesembolso($credito, 1400);
 
         $referencia = "DESEMBOLSO-{$credito->num_prog}";
         $this->assertSame(1, MovimientoCaja::where('referencia', $referencia)->count());
         $this->assertDatabaseHas('movimientos_caja', [
             'referencia' => $referencia,
             'tipo' => 'Egreso',
-            'monto' => 1500.00,
+            'monto' => 1400.00,
         ]);
     }
 }

@@ -192,18 +192,19 @@ class FlujoCajaService
      * Sincroniza el egreso generado por un crédito cuando cambia el monto entregado.
      * La referencia única evita que una edición cree desembolsos duplicados.
      */
-    public function sincronizarDesembolso(Credito $credito): ?MovimientoCaja
+    public function sincronizarDesembolso(Credito $credito, ?float $monto = null): ?MovimientoCaja
     {
+        $monto = $monto ?? (float) $credito->monto_otorgado;
         $referencia = "DESEMBOLSO-{$credito->num_prog}";
         $movimiento = MovimientoCaja::where('referencia', $referencia)->first();
 
         if (! $movimiento) {
-            return $this->registrarDesdeDesembolso($credito, (float) $credito->monto_otorgado);
+            return $this->registrarDesdeDesembolso($credito, $monto);
         }
 
-        return DB::transaction(function () use ($movimiento, $credito) {
+        return DB::transaction(function () use ($movimiento, $monto) {
             $movimiento->update([
-                'monto' => abs((float) $credito->monto_otorgado),
+                'monto' => abs($monto),
             ]);
 
             $this->recalcularSaldosDesde($movimiento->fecha->format('Y-m-d'));
