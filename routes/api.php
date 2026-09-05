@@ -112,9 +112,12 @@ Route::middleware('auth:api')->group(function () {
 
     // Expediente y Documentos del Préstamo (Pagarés, Cartas, Tarjetas firmadas)
     Route::get('creditos/{num_prog}/documentos', [DocumentoCreditoController::class, 'index']);
-    Route::post('creditos/{num_prog}/documentos', [DocumentoCreditoController::class, 'store']);
-    Route::delete('creditos/{num_prog}/documentos/{docId}', [DocumentoCreditoController::class, 'destroy']);
-    Route::put('creditos/{num_prog}/expediente-fisico', [DocumentoCreditoController::class, 'updateExpedienteFisico']);
+    Route::post('creditos/{num_prog}/documentos', [DocumentoCreditoController::class, 'store'])
+        ->middleware('role:admin');
+    Route::delete('creditos/{num_prog}/documentos/{docId}', [DocumentoCreditoController::class, 'destroy'])
+        ->middleware('role:admin');
+    Route::put('creditos/{num_prog}/expediente-fisico', [DocumentoCreditoController::class, 'updateExpedienteFisico'])
+        ->middleware('role:admin');
 
     // Contabilidad
     Route::get('inversionistas', [InversionistaController::class, 'index']);
