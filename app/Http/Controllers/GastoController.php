@@ -53,6 +53,13 @@ class GastoController extends Controller
         return response()->json(['message' => 'Gasto actualizado', 'data' => $gasto]);
     }
 
+    public function destroy(GastoOperativo $gasto, CapitalService $capitalService)
+    {
+        $capitalService->eliminarGasto($gasto);
+
+        return response()->json(['message' => 'Gasto eliminado y movimientos sincronizados']);
+    }
+
     private function catalogoParaGasto(int $catalogoId, ?GastoOperativo $gasto = null): CatalogoGasto
     {
         $catalogo = CatalogoGasto::findOrFail($catalogoId);

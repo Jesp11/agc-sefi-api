@@ -151,6 +151,21 @@ class CapitalService
         });
     }
 
+    /** Elimina un gasto y los movimientos contables que se originaron con él. */
+    public function eliminarGasto(GastoOperativo $gasto): void
+    {
+        DB::transaction(function () use ($gasto) {
+            $fecha = $gasto->fecha->toDateString();
+            $referencia = "GASTO-{$gasto->id}";
+
+            MovimientoCaja::where('referencia', $referencia)->delete();
+            MovimientoCapital::where('referencia', $referencia)->delete();
+            $gasto->delete();
+
+            app(FlujoCajaService::class)->recalcularSaldosDesde($fecha);
+        });
+    }
+
     public function capitalPasivo(): array
     {
         $aportaciones = Aportacion::where('tipo', 'Aportacion')->sum('monto')

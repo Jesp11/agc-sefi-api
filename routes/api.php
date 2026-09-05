@@ -131,6 +131,7 @@ Route::middleware('auth:api')->group(function () {
     Route::get('gastos', [GastoController::class, 'index']);
     Route::post('gastos', [GastoController::class, 'store']);
     Route::put('gastos/{gasto}', [GastoController::class, 'update']);
+    Route::delete('gastos/{gasto}', [GastoController::class, 'destroy']);
     Route::get('catalogo-gastos', [CatalogoGastoController::class, 'index']);
     Route::post('catalogo-gastos', [CatalogoGastoController::class, 'store']);
     Route::put('catalogo-gastos/{id}', [CatalogoGastoController::class, 'update']);
