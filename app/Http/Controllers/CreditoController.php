@@ -9,6 +9,7 @@ use App\Support\RoleHelper;
 use App\Http\Requests\StoreCreditoRequest;
 use App\Http\Requests\UpdateCreditoRequest;
 use App\Services\CicloService;
+use App\Services\FlujoCajaService;
 use App\Services\MoraCalculationService;
 use Illuminate\Http\Request;
 
@@ -16,6 +17,7 @@ class CreditoController extends Controller
 {
     public function __construct(
         private CicloService $cicloService,
+        private FlujoCajaService $flujoCajaService,
         private MoraCalculationService $moraService
     ) {}
 
@@ -115,6 +117,7 @@ class CreditoController extends Controller
 
         $credito = Credito::create($data);
         $this->cicloService->registrarInicio($credito);
+        $this->flujoCajaService->registrarDesdeDesembolso($credito, (float) $credito->monto_otorgado);
 
         return response()->json([
             'message' => 'Crédito creado exitosamente',
@@ -149,6 +152,7 @@ class CreditoController extends Controller
     {
         $credito = Credito::findOrFail($id);
         $data = $request->validated();
+        $montoOtorgadoAnterior = (float) $credito->monto_otorgado;
 
         if (isset($data['id_cliente'])) {
             $cliente = Cliente::findOrFail($data['id_cliente']);
@@ -163,6 +167,18 @@ class CreditoController extends Controller
         }
 
         $credito->update($data);
+
+        $montoOtorgadoCambio = array_key_exists('monto_otorgado', $data)
+            && abs($montoOtorgadoAnterior - (float) $credito->monto_otorgado) >= 0.005;
+
+        if ($montoOtorgadoCambio) {
+            $this->flujoCajaService->sincronizarDesembolso($credito);
+        } else {
+            // Al guardar un crédito histórico, crea el egreso que faltaba.
+            // registrarDesdeDesembolso es idempotente por referencia, por lo
+            // que un movimiento existente no se duplica ni se modifica.
+            $this->flujoCajaService->registrarDesdeDesembolso($credito, (float) $credito->monto_otorgado);
+        }
 
         if (isset($data['abono_recuperacion'])) {
             $this->moraService->syncCreditoState($credito->fresh()->load('pagos'));
