@@ -41,7 +41,10 @@ class FlujoCajaService
         if (str_contains($m, 'RENDIMIENTO')) {
             return 'Rendimiento';
         }
-        if (str_contains($m, 'DESEMBOLSO') || str_contains($m, 'RENOVACION') || str_contains($m, 'RENOVACIÓN')) {
+        if (str_contains($m, 'RENOVACION') || str_contains($m, 'RENOVACIÓN')) {
+            return 'Renovacion';
+        }
+        if (str_contains($m, 'DESEMBOLSO')) {
             return 'Desembolso';
         }
 
@@ -120,7 +123,7 @@ class FlujoCajaService
     /**
      * Egreso por desembolso de efectivo (crédito nuevo o refinanciamiento).
      */
-    public function registrarDesdeDesembolso(Credito $credito, float $monto, ?string $motivo = null): ?MovimientoCaja
+    public function registrarDesdeDesembolso(Credito $credito, float $monto, ?string $motivo = null, ?string $categoria = null): ?MovimientoCaja
     {
         $monto = abs($monto);
         if ($monto < 0.01) {
@@ -149,7 +152,7 @@ class FlujoCajaService
             'motivo' => $motivo ?? "DESEMBOLSO CRÉDITO #{$credito->num_prog} — {$beneficiario}",
             'tipo' => 'Egreso',
             'monto' => $monto,
-            'categoria' => 'Desembolso',
+            'categoria' => $categoria ?? 'Desembolso',
             'cuenta' => 'Efectivo',
             'num_prog' => $credito->num_prog,
             'referencia' => $referencia,

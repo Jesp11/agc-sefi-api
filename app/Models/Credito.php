@@ -90,6 +90,12 @@ class Credito extends Model
         return $this->hasMany(Refinanciamiento::class, 'num_prog_nuevo', 'num_prog');
     }
 
+    /** Renovaciones en las que este crédito fue el crédito sustituido. */
+    public function refinanciamientosComoAnterior()
+    {
+        return $this->hasMany(Refinanciamiento::class, 'num_prog_anterior', 'num_prog');
+    }
+
     public function documentos()
     {
         return $this->hasMany(DocumentoCredito::class, 'num_prog', 'num_prog');

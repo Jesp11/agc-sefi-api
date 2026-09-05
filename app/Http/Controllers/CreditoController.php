@@ -134,7 +134,8 @@ class CreditoController extends Controller
             'asesor',
             'pagos',
             'creditoPadre',
-            'refinanciamientos',
+            'refinanciamientos.creditoAnterior',
+            'refinanciamientosComoAnterior.creditoNuevo',
         ])->findOrFail($id);
         $mora = $this->moraService->calculate($credito);
 

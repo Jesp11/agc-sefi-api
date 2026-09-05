@@ -41,8 +41,17 @@ class CarteraService
                 $q->where('estado', 'Activo')
                   ->orWhere(function ($sub) use ($fechaRef) {
                       $sub->where('estado', 'Finalizado')
-                          ->whereHas('pagos', function ($pq) use ($fechaRef) {
-                              $pq->whereDate('fecha', '>=', $fechaRef->toDateString());
+                          ->where(function ($historical) use ($fechaRef) {
+                              // Un crédito renovado conserva su ruta únicamente antes de la
+                              // fecha efectiva. En esa fecha y posteriores lo reemplaza el nuevo.
+                              $historical->whereHas('refinanciamientosComoAnterior', function ($rq) use ($fechaRef) {
+                                  $rq->whereDate('fecha_efectiva', '>', $fechaRef->toDateString());
+                              })->orWhere(function ($legacy) use ($fechaRef) {
+                                  $legacy->whereDoesntHave('refinanciamientosComoAnterior')
+                                      ->whereHas('pagos', function ($pq) use ($fechaRef) {
+                                          $pq->whereDate('fecha', '>=', $fechaRef->toDateString());
+                                      });
+                              });
                           });
                   });
             });

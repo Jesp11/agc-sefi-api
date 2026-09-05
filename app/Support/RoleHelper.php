@@ -4,7 +4,7 @@ namespace App\Support;
 
 final class RoleHelper
 {
-    public const ADMIN_EQUIVALENTS = ['admin', 'Administrador', 'Gerencia', 'Contabilidad'];
+    public const ADMIN_EQUIVALENTS = ['admin', 'Administrador', 'Administración', 'Gerencia', 'Contabilidad'];
 
     public const FIELD_EQUIVALENTS = ['asesor', 'Gestor de Cobranza', 'Asesor Financiero'];
 

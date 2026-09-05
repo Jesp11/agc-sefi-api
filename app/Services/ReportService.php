@@ -16,6 +16,7 @@ use App\Models\Inversionista;
 use App\Models\MovimientoCaja;
 use App\Models\Pago;
 use App\Models\RecepcionAsesor;
+use App\Models\Refinanciamiento;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -101,6 +102,28 @@ class ReportService
             'pagos' => $pagos->values(),
             'creditos' => $creditos,
             'cobros_programados' => $cobrosProgramados->values(),
+            'renovaciones_del_dia' => Refinanciamiento::with([
+                'creditoAnterior.cliente', 'creditoAnterior.grupo', 'creditoAnterior.asesor',
+                'creditoNuevo.cliente', 'creditoNuevo.grupo', 'creditoNuevo.asesor',
+            ])
+                ->whereDate('fecha_efectiva', $fecha)
+                ->when($idAsesor, fn ($q) => $q->whereHas('creditoNuevo', fn ($cq) => $cq->where('id_asesor', $idAsesor)))
+                ->orderBy('id')
+                ->get()
+                ->map(function (Refinanciamiento $renovacion) {
+                    $nuevo = $renovacion->creditoNuevo;
+                    return [
+                        'id' => $renovacion->id,
+                        'num_prog_anterior' => $renovacion->num_prog_anterior,
+                        'num_prog_nuevo' => $renovacion->num_prog_nuevo,
+                        'fecha_efectiva' => $renovacion->fecha_efectiva?->toDateString(),
+                        'saldo_absorbido' => (float) $renovacion->deduccion,
+                        'monto_neto' => (float) $renovacion->monto_neto,
+                        'plazos' => $nuevo?->plazos,
+                        'cliente' => $nuevo?->cliente?->nombre_completo ?? $nuevo?->grupo?->nombre_grupo,
+                        'gestor' => $nuevo?->asesor?->nombre_asesor,
+                    ];
+                })->values(),
         ];
 
         if ($idAsesor) {
@@ -291,6 +314,115 @@ class ReportService
         return ['creditos' => $creditos, 'total' => $creditos->count()];
     }
 
+    /**
+     * Returns the unpaid portions of installments which are already overdue.
+     * This is deliberately a current balance report: payments are applied to
+     * installments from oldest to newest, regardless of the selected period.
+     */
+    public function pagosAtrasados(string $fechaInicio, string $fechaFin, ?int $idAsesor = null): array
+    {
+        $inicio = Carbon::parse($fechaInicio)->startOfDay();
+        $fin = Carbon::parse($fechaFin)->startOfDay();
+        $hoy = Carbon::today();
+
+        $creditos = Credito::with(['cliente', 'grupo', 'asesor', 'pagos'])
+            ->where('estado', 'Activo')
+            ->when($idAsesor, fn ($query) => $query->where('id_asesor', $idAsesor))
+            ->get();
+
+        $porAsesor = [];
+
+        foreach ($creditos as $credito) {
+            $calendario = $this->moraService->generateSchedule($credito);
+            if ($calendario === []) {
+                continue;
+            }
+
+            $abonos = $credito->pagos
+                ->filter(fn (Pago $pago) => $pago->tipo === 'Abono')
+                ->sort(function (Pago $a, Pago $b) {
+                    $fechaA = ($a->fecha?->format('Y-m-d') ?? '0000-00-00') . ' ' . ($a->hora ?? '00:00:00');
+                    $fechaB = ($b->fecha?->format('Y-m-d') ?? '0000-00-00') . ' ' . ($b->hora ?? '00:00:00');
+
+                    return $fechaA <=> $fechaB ?: ((int) $a->id <=> (int) $b->id);
+                })->values();
+            $indiceAbono = 0;
+            $abonoDisponible = round((float) ($abonos->get($indiceAbono)?->monto ?? 0), 2);
+
+            foreach ($calendario as $cuota) {
+                $programado = round((float) $cuota['pago'], 2);
+                $pendiente = $programado;
+
+                while ($pendiente > 0.009 && $abonoDisponible > 0.009) {
+                    $aplicado = min($pendiente, $abonoDisponible);
+                    $pendiente = round($pendiente - $aplicado, 2);
+                    $abonoDisponible = round($abonoDisponible - $aplicado, 2);
+
+                    if ($abonoDisponible < 0.01) {
+                        $indiceAbono++;
+                        $abonoDisponible = round((float) ($abonos->get($indiceAbono)?->monto ?? 0), 2);
+                    }
+                }
+
+                $vencimiento = Carbon::parse($cuota['fecha'])->startOfDay();
+
+                // A due date today is collectible today; it becomes overdue tomorrow.
+                if ($pendiente < 0.01 || ! $vencimiento->lt($hoy) || ! $vencimiento->betweenIncluded($inicio, $fin)) {
+                    continue;
+                }
+
+                $asesorId = (int) ($credito->id_asesor ?? 0);
+                if (! isset($porAsesor[$asesorId])) {
+                    $porAsesor[$asesorId] = [
+                        'id_asesor' => $asesorId ?: null,
+                        'nombre_asesor' => $credito->asesor?->nombre_asesor ?? 'Sin asesor',
+                        'codigo_asesor' => $credito->asesor?->id_asesor,
+                        'creditos' => [],
+                        'cuotas' => [],
+                    ];
+                }
+
+                $porAsesor[$asesorId]['creditos'][$credito->num_prog] = true;
+                $porAsesor[$asesorId]['cuotas'][] = [
+                    'fecha_vencimiento' => $vencimiento->toDateString(),
+                    'dias_atraso' => $vencimiento->diffInDays($hoy),
+                    'folio' => (int) $credito->num_prog,
+                    'num_prog' => (int) $credito->num_prog,
+                    'cliente_grupo' => $credito->tipo_credito === 'Grupal'
+                        ? ($credito->grupo?->nombre_grupo ?? 'Grupo sin nombre')
+                        : ($credito->cliente?->nombre_completo ?? 'Cliente sin nombre'),
+                    'tipo_credito' => $credito->tipo_credito,
+                    'cuota' => (int) $cuota['semana'],
+                    'importe_programado' => $programado,
+                    'importe_pendiente' => $pendiente,
+                ];
+            }
+        }
+
+        $asesores = collect($porAsesor)->map(function (array $asesor) {
+            usort($asesor['cuotas'], fn (array $a, array $b) => [$a['fecha_vencimiento'], $a['folio'], $a['cuota']] <=> [$b['fecha_vencimiento'], $b['folio'], $b['cuota']]);
+            $asesor['resumen'] = [
+                'creditos' => count($asesor['creditos']),
+                'cuotas_atrasadas' => count($asesor['cuotas']),
+                'importe_pendiente' => round((float) collect($asesor['cuotas'])->sum('importe_pendiente'), 2),
+            ];
+            unset($asesor['creditos']);
+
+            return $asesor;
+        })->sortBy('nombre_asesor', SORT_NATURAL | SORT_FLAG_CASE)->values();
+
+        return [
+            'fecha_inicio' => $inicio->toDateString(),
+            'fecha_fin' => $fin->toDateString(),
+            'resumen' => [
+                'creditos' => (int) $asesores->sum(fn (array $asesor) => $asesor['resumen']['creditos']),
+                'cuotas_atrasadas' => (int) $asesores->sum(fn (array $asesor) => $asesor['resumen']['cuotas_atrasadas']),
+                'importe_pendiente' => round((float) $asesores->sum(fn (array $asesor) => $asesor['resumen']['importe_pendiente']), 2),
+            ],
+            'por_asesor' => $asesores->all(),
+        ];
+    }
+
     public function moraPorAsesor(?int $idAsesor = null): array
     {
         $query = Credito::with(['cliente', 'grupo', 'asesor', 'pagos'])
@@ -455,6 +587,34 @@ class ReportService
         });
 
         return $result;
+    }
+
+    /** Créditos activos que ya tienen una renovación programada. */
+    public function renovacionesAgendadas(?string $fechaInicio = null, ?string $fechaFin = null, ?int $idAsesor = null, ?string $autorizacion = null): array
+    {
+        $query = Credito::with(['cliente', 'grupo', 'asesor', 'pagos'])
+            ->where('estado', 'Activo')
+            ->whereNotNull('fecha_programada_renovacion')
+            ->when($fechaInicio, fn ($q) => $q->whereDate('fecha_programada_renovacion', '>=', $fechaInicio))
+            ->when($fechaFin, fn ($q) => $q->whereDate('fecha_programada_renovacion', '<=', $fechaFin))
+            ->when($idAsesor, fn ($q) => $q->where('id_asesor', $idAsesor))
+            ->when($autorizacion, fn ($q) => $q->where('renovacion_autorizada', $autorizacion))
+            ->orderBy('fecha_programada_renovacion')
+            ->orderBy('num_prog');
+
+        return $query->get()->map(function (Credito $credito) {
+            $mora = $this->moraService->calculate($credito);
+            $saldo = round((float) ($mora['saldo_actual'] ?? 0), 2);
+            $pagosPendientes = (float) $credito->valor_ficha > 0
+                ? (int) ceil($saldo / (float) $credito->valor_ficha)
+                : 0;
+
+            return array_merge($credito->toArray(), [
+                'saldo_actual' => $saldo,
+                'pagos_pendientes' => $pagosPendientes,
+                'cuota' => (float) $credito->valor_ficha,
+            ]);
+        })->values()->all();
     }
 
     public function reporteInversionistas(): array

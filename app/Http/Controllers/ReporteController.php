@@ -63,6 +63,36 @@ class ReporteController extends Controller
         ));
     }
 
+    public function pagosAtrasados(Request $request)
+    {
+        $data = $request->validate([
+            'fecha_inicio' => 'required|date',
+            'fecha_fin' => 'required|date|after_or_equal:fecha_inicio',
+            'id_asesor' => 'nullable|integer|exists:asesores,id',
+        ]);
+
+        $user = $request->user()->loadMissing('role');
+        $role = mb_strtolower(trim((string) ($user?->role?->nombre ?? '')), 'UTF-8');
+        $esAsesor = in_array($role, ['asesor', 'asesor financiero'], true);
+        $vistaCompleta = RoleHelper::isAdminLike($user?->role?->nombre) || $role === 'gestor de cobranza';
+
+        abort_unless($esAsesor || $vistaCompleta, 403);
+
+        // Gestor de Cobranza has a global view in this report, unlike the other
+        // field roles used by the rest of the reporting module.
+        $idAsesor = $esAsesor ? $user?->id_asesor : ($data['id_asesor'] ?? null);
+
+        if ($esAsesor && ! $idAsesor) {
+            abort(403, 'El usuario no tiene un asesor asociado.');
+        }
+
+        return response()->json($this->reportService->pagosAtrasados(
+            $data['fecha_inicio'],
+            $data['fecha_fin'],
+            $idAsesor ? (int) $idAsesor : null,
+        ));
+    }
+
     public function asesorDiario(Request $request)
     {
         return response()->json($this->reportService->reporteDiario(
@@ -89,17 +119,40 @@ class ReporteController extends Controller
     {
         $data = $request->validate([
             'fecha_programada_renovacion' => 'nullable|date',
-            'renovacion_autorizada' => 'nullable|string|max:50',
+            'renovacion_autorizada' => 'nullable|in:Pendiente,Autorizado,No Autorizado',
             'renovacion_tasa' => 'nullable|string|max:50',
         ]);
 
         $credito = \App\Models\Credito::findOrFail($num_prog);
+        if ($credito->estado !== 'Activo') {
+            return response()->json(['message' => 'Solo se pueden agendar créditos activos.'], 422);
+        }
+        if ($scopedAsesor = $this->scopedAsesorId($request)) {
+            abort_unless((int) $credito->id_asesor === $scopedAsesor, 403);
+        }
         $credito->update($data);
 
         return response()->json([
             'message' => 'Renovación actualizada correctamente',
             'credito' => $credito,
         ]);
+    }
+
+    public function renovacionesAgendadas(Request $request)
+    {
+        $data = $request->validate([
+            'fecha_inicio' => 'nullable|date',
+            'fecha_fin' => 'nullable|date|after_or_equal:fecha_inicio',
+            'id_asesor' => 'nullable|integer|exists:asesores,id',
+            'autorizacion' => 'nullable|string|max:50',
+        ]);
+
+        return response()->json($this->reportService->renovacionesAgendadas(
+            $data['fecha_inicio'] ?? null,
+            $data['fecha_fin'] ?? null,
+            $this->scopedAsesorId($request) ?? ($data['id_asesor'] ?? null),
+            $data['autorizacion'] ?? null,
+        ));
     }
 
     public function inversionistas()

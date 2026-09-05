@@ -30,6 +30,7 @@ use App\Http\Controllers\AhorroSocioController;
 use App\Http\Controllers\ReporteController;
 use App\Http\Controllers\BusquedaGlobalController;
 use App\Http\Controllers\ExcelImportController;
+use App\Http\Controllers\RenovacionHistoricaImportController;
 
 Route::group([
     'middleware' => 'api',
@@ -159,6 +160,7 @@ Route::middleware('auth:api')->group(function () {
 
     // Reportes
     Route::get('reportes/diario', [ReporteController::class, 'diario']);
+    Route::get('reportes/pagos-atrasados', [ReporteController::class, 'pagosAtrasados']);
     Route::post('reportes/diario/recibir', [ReporteController::class, 'recibirAsesor'])
         ->middleware('role:admin');
     Route::get('reportes/cartera', [ReporteController::class, 'cartera']);
@@ -166,6 +168,11 @@ Route::middleware('auth:api')->group(function () {
     Route::get('reportes/asesor/mora', [ReporteController::class, 'asesorMora']);
     Route::get('reportes/asesor/por-cerrar', [ReporteController::class, 'asesorPorCerrar']);
     Route::patch('reportes/asesor/por-cerrar/{num_prog}', [ReporteController::class, 'actualizarRenovacion']);
+    Route::get('reportes/renovaciones-agendadas', [ReporteController::class, 'renovacionesAgendadas']);
+    Route::post('reportes/renovaciones-historicas/preview', [RenovacionHistoricaImportController::class, 'preview'])
+        ->middleware('role:admin');
+    Route::post('reportes/renovaciones-historicas/confirm', [RenovacionHistoricaImportController::class, 'confirm'])
+        ->middleware('role:admin');
     Route::get('reportes/semanal', [ReporteController::class, 'semanal']);
     Route::get('reportes/inversionistas', [ReporteController::class, 'inversionistas']);
     Route::get('reportes/cierre-mensual', [ReporteController::class, 'cierreMensual']);

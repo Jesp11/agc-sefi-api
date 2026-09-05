@@ -17,6 +17,7 @@ class RefinanciarCreditoRequest extends FormRequest
             'monto_otorgado' => 'required|numeric|min:0.01',
             'fecha_primer_pago' => 'required|date',
             'fecha_otorgacion' => 'nullable|date',
+            'fecha_efectiva' => 'nullable|date',
             'plazos' => 'required|integer|min:1|max:104',
             'valor_ficha' => 'required|numeric|min:0.01',
             'total' => 'required|numeric|min:0.01',
@@ -26,6 +27,8 @@ class RefinanciarCreditoRequest extends FormRequest
             'tasa_asignada' => 'nullable|string|max:50',
             'comision_apertura' => 'nullable|numeric|min:0',
             'intereses_arrastrados' => 'nullable|numeric|min:0',
+            'abono_efectivo' => 'nullable|numeric|min:0',
+            'metodo_pago_abono' => 'nullable|in:Efectivo,Transferencia,Otro',
             'notas' => 'nullable|string|max:500',
         ];
     }
