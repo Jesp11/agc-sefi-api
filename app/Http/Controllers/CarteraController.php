@@ -106,12 +106,18 @@ class CarteraController extends Controller
             ->whereDoesntHave('creditosHijos', function ($q) {
                 $q->whereIn('estado', ['Activo', 'EnMora']);
             })
-            // Si el grupo tiene un crédito activo o en mora, el grupo sigue vigente y no debe
+            // Si el grupo o cliente tiene un crédito activo o en mora, sigue vigente y no debe
             // figurar en la lista de cerrados aunque el crédito actual no provenga de renovación.
             ->where(function ($q) {
                 $q->whereNull('id_grupo')
                     ->orWhereDoesntHave('grupo.creditos', function ($gq) {
                         $gq->whereIn('estado', ['Activo', 'EnMora']);
+                    });
+            })
+            ->where(function ($q) {
+                $q->whereNull('id_cliente')
+                    ->orWhereDoesntHave('cliente.creditos', function ($cq) {
+                        $cq->whereIn('estado', ['Activo', 'EnMora']);
                     });
             });
 

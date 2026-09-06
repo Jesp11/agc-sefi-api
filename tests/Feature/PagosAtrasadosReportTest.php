@@ -143,7 +143,8 @@ class PagosAtrasadosReportTest extends TestCase
         $vigente = $this->credito($advisor, $cliente, 'Activo', '2026-09-01', 4);
         $cerradoConHijo = $this->credito($advisor, $cliente, 'Finalizado', '2026-08-01', 4);
         $hijoVigente = $this->credito($advisor, $cliente, 'Activo', '2026-09-01', 4);
-        $cerradoSinRenovar = $this->credito($advisor, $cliente, 'CerradoSinRenovacion', '2026-08-01', 4);
+        $clienteSinRenovar = $this->cliente('CLI-002', 'Cliente Sin Renovar');
+        $cerradoSinRenovar = $this->credito($advisor, $clienteSinRenovar, 'CerradoSinRenovacion', '2026-08-01', 4);
         $hijoVigente->update(['credito_padre_id' => $cerradoConHijo->num_prog]);
 
         Refinanciamiento::create([
@@ -177,6 +178,25 @@ class PagosAtrasadosReportTest extends TestCase
         $folios = array_column($response->getData(true)['data'], 'num_prog');
 
         $this->assertSame([$creditoGrupoCerrado->num_prog], $folios);
+    }
+
+    public function test_closed_portfolio_excludes_individual_client_with_active_credit_without_formal_renewal(): void
+    {
+        $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
+        $clienteActivo = $this->cliente('CLI-010', 'Cliente Con Nuevo Credito');
+        $clienteCerrado = $this->cliente('CLI-011', 'Cliente Sin Nuevo Credito');
+
+        // Cliente con crédito cerrado anterior pero con nuevo crédito activo no formalmente renovado
+        $creditoAnterior = $this->credito($advisor, $clienteActivo, 'Finalizado', '2026-08-01', 4);
+        $creditoNuevo = $this->credito($advisor, $clienteActivo, 'Activo', '2026-09-01', 4);
+
+        // Cliente cerrado real
+        $creditoRealCerrado = $this->credito($advisor, $clienteCerrado, 'CerradoSinRenovacion', '2026-08-01', 4);
+
+        $response = app(CarteraController::class)->cerrados(new Request(['tipo' => 'individual']));
+        $folios = array_column($response->getData(true)['data'], 'num_prog');
+
+        $this->assertSame([$creditoRealCerrado->num_prog], $folios);
     }
 
     private function cliente(string $id, string $nombre): Cliente

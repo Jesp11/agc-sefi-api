@@ -136,6 +136,15 @@ class CreditoController extends Controller
             $credito = Credito::create($data);
             if ($credito->tipo_credito === 'Grupal') {
                 $this->distribucionService->guardar($credito, $distribucionIntegrantes ?? []);
+                $credito->load('grupo.clientes');
+                foreach ($credito->grupo?->clientes ?? [] as $integrante) {
+                    $integrante->update(['estatus' => 'Activo', 'fecha_cierre' => null]);
+                }
+            } elseif ($credito->id_cliente) {
+                Cliente::where('id_cliente', $credito->id_cliente)->update([
+                    'estatus' => 'Activo',
+                    'fecha_cierre' => null,
+                ]);
             }
             return $credito;
         });

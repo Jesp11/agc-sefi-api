@@ -311,6 +311,12 @@ class ReportService
                         ->orWhereDoesntHave('grupo.creditos', function ($gq) {
                             $gq->whereIn('estado', ['Activo', 'EnMora']);
                         });
+                })
+                ->where(function ($q) {
+                    $q->whereNull('id_cliente')
+                        ->orWhereDoesntHave('cliente.creditos', function ($cq) {
+                            $cq->whereIn('estado', ['Activo', 'EnMora']);
+                        });
                 });
         } elseif ($tipo === 'general') {
             $query->where('estado', 'Activo');
