@@ -157,11 +157,16 @@ class ReportService
                 $cobrado = round((float) $pagosAsesor->sum('monto'), 2);
                 $progDelDia = round((float) $cobrosAsesor->where('categoria', 'del_dia')->sum('monto_a_cobrar'), 2);
                 $progAtrasado = round((float) $cobrosAsesor->where('categoria', 'atrasado')->sum('monto_a_cobrar'), 2);
-                $progTotal = round((float) $cobrosAsesor->sum('monto_a_cobrar'), 2);
                 $comisionesRenovacion = round((float) $renovacionesDelDia
                     ->where('id_asesor', (int) $aid)
                     ->sum('comision_apertura'), 2);
-                $aRecibirBruto = max($cobrado, $progTotal);
+                // El corte diario se basa únicamente en la ruta asignada para
+                // esa fecha. Los atrasados se consultan y gestionan por
+                // separado; incluirlos aquí hacía que "A recibir" no
+                // coincidiera con la ruta mostrada al gestor.
+                // Si hubo abonos mayores a la ruta del día, se conserva el
+                // monto realmente cobrado porque también debe entregarse.
+                $aRecibirBruto = max($cobrado, $progDelDia);
                 // La comisión se descuenta del efectivo de la renovación. La
                 // operación la realiza gerencia, así que no es un faltante ni
                 // un abono que el gestor responsable deba entregar.
@@ -177,8 +182,8 @@ class ReportService
                     'prog_atrasado' => $progAtrasado,
                     'num_programados' => $cobrosAsesor->count(),
                     'num_del_dia' => $cobrosAsesor->where('categoria', 'del_dia')->count(),
-                    'monto_programado' => $progTotal,
-                    'monto_exigible' => $progTotal,
+                    'monto_programado' => $progDelDia,
+                    'monto_exigible' => $progDelDia,
                     'a_recibir_bruto' => $aRecibirBruto,
                     'comisiones_renovacion' => $comisionesRenovacion,
                     'a_recibir' => $aRecibir,
