@@ -6,9 +6,13 @@ use App\Models\Asesor;
 use App\Models\Cliente;
 use App\Models\Credito;
 use App\Models\Pago;
+use App\Models\Refinanciamiento;
+use App\Http\Controllers\CarteraController;
+use App\Services\CarteraService;
 use App\Services\ReportService;
 use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
@@ -106,6 +110,55 @@ class PagosAtrasadosReportTest extends TestCase
         $this->assertSame(['Pendiente', 'Pendiente'], array_column(array_slice($estados, 14, 2), 'estado'));
     }
 
+    public function test_daily_collection_marks_a_credit_with_an_abono_on_the_selected_date(): void
+    {
+        $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
+        $cliente = $this->cliente('CLI-001', 'Cliente Ana');
+        $credito = $this->credito($advisor, $cliente, 'Activo', '2026-08-01', 4);
+        $atrasado = $this->credito($advisor, $cliente, 'Activo', '2026-08-01', 4);
+        $atrasado->update(['dias_pago' => 'LUNES']);
+
+        Pago::create([
+            'num_prog' => $credito->num_prog,
+            'monto' => 100,
+            'fecha' => '2026-08-08',
+            'hora' => '09:00:00',
+            'tipo' => 'Abono',
+        ]);
+
+        $cobro = collect(app(CarteraService::class)->cobrosDelDia('2026-08-08')['cobros'])
+            ->firstWhere('num_prog', $credito->num_prog);
+
+        $this->assertNotNull($cobro);
+        $this->assertTrue($cobro['pagado_hoy']);
+        $this->assertSame(100.0, app(CarteraService::class)->cobrosDelDia('2026-08-08')['monto_a_cobrar']);
+    }
+
+    public function test_closed_portfolio_excludes_a_credit_replaced_by_an_active_renewal(): void
+    {
+        $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
+        $cliente = $this->cliente('CLI-001', 'Cliente Ana');
+        $renovado = $this->credito($advisor, $cliente, 'Finalizado', '2026-08-01', 4);
+        $vigente = $this->credito($advisor, $cliente, 'Activo', '2026-09-01', 4);
+        $cerradoConHijo = $this->credito($advisor, $cliente, 'Finalizado', '2026-08-01', 4);
+        $hijoVigente = $this->credito($advisor, $cliente, 'Activo', '2026-09-01', 4);
+        $cerradoSinRenovar = $this->credito($advisor, $cliente, 'CerradoSinRenovacion', '2026-08-01', 4);
+        $hijoVigente->update(['credito_padre_id' => $cerradoConHijo->num_prog]);
+
+        Refinanciamiento::create([
+            'num_prog_anterior' => $renovado->num_prog,
+            'num_prog_nuevo' => $vigente->num_prog,
+            'saldo_anterior' => 100,
+            'deduccion' => 100,
+            'monto_neto' => 300,
+        ]);
+
+        $response = app(CarteraController::class)->cerrados(new Request(['tipo' => 'individual']));
+        $folios = array_column($response->getData(true)['data'], 'num_prog');
+
+        $this->assertSame([$cerradoSinRenovar->num_prog], $folios);
+    }
+
     private function cliente(string $id, string $nombre): Cliente
     {
         return Cliente::create(['id_cliente' => $id, 'nombre_completo' => $nombre]);
@@ -133,7 +186,7 @@ class PagosAtrasadosReportTest extends TestCase
 
     private function createSchema(): void
     {
-        foreach (['pagos', 'creditos', 'grupos', 'clientes', 'asesores'] as $table) {
+        foreach (['pagos', 'refinanciamientos', 'creditos', 'grupos', 'clientes', 'asesores'] as $table) {
             Schema::dropIfExists($table);
         }
         Schema::create('asesores', function (Blueprint $table) { $table->id(); $table->string('id_asesor')->nullable(); $table->string('nombre_asesor'); $table->timestamps(); });
@@ -144,6 +197,12 @@ class PagosAtrasadosReportTest extends TestCase
             $table->date('fecha_otorgacion'); $table->date('fecha_primer_pago')->nullable(); $table->integer('ciclo'); $table->decimal('monto_otorgado', 12, 2);
             $table->decimal('interes', 12, 2); $table->decimal('total', 12, 2); $table->decimal('saldo_pendiente', 12, 2)->nullable(); $table->integer('plazos');
             $table->decimal('valor_ficha', 12, 2); $table->string('dias_pago'); $table->string('tipo_credito'); $table->string('estado'); $table->timestamps();
+            $table->unsignedBigInteger('credito_padre_id')->nullable();
+        });
+        Schema::create('refinanciamientos', function (Blueprint $table) {
+            $table->id(); $table->unsignedBigInteger('num_prog_anterior'); $table->unsignedBigInteger('num_prog_nuevo');
+            $table->decimal('saldo_anterior', 12, 2); $table->decimal('deduccion', 12, 2); $table->decimal('monto_neto', 12, 2);
+            $table->date('fecha_efectiva')->nullable(); $table->timestamps();
         });
         Schema::create('pagos', function (Blueprint $table) {
             $table->id(); $table->unsignedBigInteger('num_prog'); $table->decimal('monto', 12, 2); $table->date('fecha'); $table->time('hora')->nullable(); $table->string('tipo'); $table->timestamps();

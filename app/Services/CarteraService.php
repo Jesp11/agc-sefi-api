@@ -96,7 +96,12 @@ class CarteraService
             'total_cobros' => count($cobros),
             'total_del_dia' => count(array_filter($cobros, fn ($c) => $c['categoria'] === 'del_dia')),
             'total_atrasados' => count(array_filter($cobros, fn ($c) => $c['categoria'] === 'atrasado')),
-            'monto_a_cobrar' => round(array_sum(array_column($cobros, 'monto_a_cobrar')), 2),
+            // El total de ruta no incluye atrasados: éstos sólo se reflejan
+            // en el monto cobrado cuando el gestor registra su abono.
+            'monto_a_cobrar' => round(array_sum(array_column(
+                array_filter($cobros, fn ($c) => $c['categoria'] === 'del_dia'),
+                'monto_a_cobrar'
+            )), 2),
             'monto_cobrado' => round($montoCobrado, 2),
             'num_abonos' => $pagosDelDia->where('tipo', 'Abono')->count(),
             'monto_multas' => round($montoMultas, 2),
@@ -155,6 +160,10 @@ class CarteraService
         $tieneAtrasadas = $oldest['atrasada'];
         $diaPago = $this->normalizarDiaPago($credito->dias_pago);
         $esDiaPago = $diaPago === $diaSemana;
+        $pagadoHoy = $credito->pagos
+            ->where('tipo', 'Abono')
+            ->contains(fn ($pago) => $pago->fecha
+                && Carbon::parse($pago->fecha)->isSameDay($fechaRef));
 
         // Del día: clientes cuyo día asignado es hoy.
         // Atrasados: clientes de otros días que deben cuotas pasadas.
@@ -181,6 +190,9 @@ class CarteraService
             'cuotas_atrasadas' => collect($pendientes)->where('atrasada', true)->count(),
             'dias_atraso' => $diasAtraso,
             'categoria' => $categoria,
+            // La ruta conserva el crédito después de un abono para que el
+            // gestor tenga confirmación visual de lo que ya cobró.
+            'pagado_hoy' => $pagadoHoy,
             'cliente' => $credito->cliente?->toArray() ?? [],
             'grupo' => $credito->grupo?->toArray(),
             'asesor' => $credito->asesor?->toArray(),

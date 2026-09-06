@@ -299,7 +299,13 @@ class ReportService
                 });
             });
         } elseif ($tipo === 'cerrados') {
-            $query->whereIn('estado', ['CerradoSinRenovacion', 'Finalizado']);
+            $query->whereIn('estado', ['CerradoSinRenovacion', 'Finalizado'])
+                ->whereDoesntHave('refinanciamientosComoAnterior.creditoNuevo', function ($q) {
+                    $q->where('estado', 'Activo');
+                })
+                ->whereDoesntHave('creditosHijos', function ($q) {
+                    $q->where('estado', 'Activo');
+                });
         } elseif ($tipo === 'general') {
             $query->where('estado', 'Activo');
         }

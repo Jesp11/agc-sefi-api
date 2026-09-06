@@ -97,7 +97,15 @@ class CarteraController extends Controller
         $idAsesor = $this->scopedAsesorId($request);
 
         $query = Credito::with(['cliente', 'grupo', 'asesor'])
-            ->whereIn('estado', ['CerradoSinRenovacion', 'Finalizado']);
+            ->whereIn('estado', ['CerradoSinRenovacion', 'Finalizado'])
+            // Un crédito sustituido por una renovación activa no representa
+            // un cliente cerrado; su continuidad está en el crédito nuevo.
+            ->whereDoesntHave('refinanciamientosComoAnterior.creditoNuevo', function ($q) {
+                $q->where('estado', 'Activo');
+            })
+            ->whereDoesntHave('creditosHijos', function ($q) {
+                $q->where('estado', 'Activo');
+            });
 
         if ($tipo === 'individual') {
             $query->where('tipo_credito', 'Individual');
