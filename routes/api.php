@@ -58,6 +58,8 @@ Route::middleware('auth:api')->group(function () {
     Route::apiResource('asesores', AsesorController::class);
     // Lectura de créditos (asesor y admin)
     Route::get('creditos', [CreditoController::class, 'index']);
+    Route::get('creditos/{credito}/eliminacion-preview', [CreditoController::class, 'eliminacionPreview'])
+        ->middleware('role:admin');
     Route::get('creditos/{credito}', [CreditoController::class, 'show']);
     // Escritura de cartera solo admin
     Route::post('creditos', [CreditoController::class, 'store'])->middleware('role:admin');

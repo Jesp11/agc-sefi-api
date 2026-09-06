@@ -9,6 +9,9 @@ use App\Support\RoleHelper;
 use App\Http\Requests\StoreCreditoRequest;
 use App\Http\Requests\UpdateCreditoRequest;
 use App\Services\CicloService;
+use App\Services\CreditoEliminacionBloqueadaException;
+use App\Services\CreditoEliminacionDesactualizadaException;
+use App\Services\CreditoEliminacionService;
 use App\Services\FlujoCajaService;
 use App\Services\MoraCalculationService;
 use Illuminate\Http\Request;
@@ -18,7 +21,8 @@ class CreditoController extends Controller
     public function __construct(
         private CicloService $cicloService,
         private FlujoCajaService $flujoCajaService,
-        private MoraCalculationService $moraService
+        private MoraCalculationService $moraService,
+        private CreditoEliminacionService $creditoEliminacionService
     ) {}
 
     public function index(Request $request)
@@ -194,12 +198,42 @@ class CreditoController extends Controller
         ]);
     }
 
-    public function destroy($id)
+    public function eliminacionPreview($id)
     {
         $credito = Credito::findOrFail($id);
-        $credito->delete();
+
+        return response()->json($this->creditoEliminacionService->preview($credito));
+    }
+
+    public function destroy(Request $request, $id)
+    {
+        $credito = Credito::findOrFail($id);
+        $data = $request->validate([
+            'confirmacion_folio' => ['required', 'string'],
+            'huella_preview' => ['required', 'string', 'size:64'],
+        ]);
+
+        if (trim($data['confirmacion_folio']) !== (string) $credito->num_prog) {
+            return response()->json([
+                'message' => 'Escribe exactamente el folio del crédito para confirmar la eliminación.',
+            ], 422);
+        }
+
+        try {
+            $resultado = $this->creditoEliminacionService->eliminar(
+                (int) $credito->num_prog,
+                $data['huella_preview'],
+            );
+        } catch (CreditoEliminacionBloqueadaException|CreditoEliminacionDesactualizadaException $e) {
+            return response()->json(['message' => $e->getMessage()], 409);
+        }
+
         return response()->json([
-            'message' => 'Crédito eliminado exitosamente',
+            'message' => 'Crédito eliminado y sus efectos vinculados fueron revertidos.',
+            'data' => [
+                'num_prog' => $credito->num_prog,
+                'documentos_eliminados' => $resultado['documentos_eliminados'],
+            ],
         ]);
     }
 
