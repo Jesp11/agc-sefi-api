@@ -81,6 +81,31 @@ class PagosAtrasadosReportTest extends TestCase
         $this->assertSame([], $empty['por_asesor']);
     }
 
+    public function test_cartera_marks_paid_and_pending_installments_separately(): void
+    {
+        $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
+        $cliente = $this->cliente('CLI-001', 'Cliente Ana');
+        $credito = $this->credito($advisor, $cliente, 'Activo', '2026-08-01', 16);
+
+        for ($i = 0; $i < 14; $i++) {
+            Pago::create([
+                'num_prog' => $credito->num_prog,
+                'monto' => 100,
+                'fecha' => Carbon::parse('2026-08-01')->addWeeks($i)->toDateString(),
+                'hora' => '09:00:00',
+                'tipo' => 'Abono',
+            ]);
+        }
+
+        $reporte = app(ReportService::class)->cartera('general');
+        $fila = $reporte['creditos']->first();
+        $estados = $fila['estado_pagos_programados'];
+
+        $this->assertSame(2, $fila['semanas_restantes']);
+        $this->assertSame(array_fill(0, 14, 'Pagado'), array_column(array_slice($estados, 0, 14), 'estado'));
+        $this->assertSame(['Pendiente', 'Pendiente'], array_column(array_slice($estados, 14, 2), 'estado'));
+    }
+
     private function cliente(string $id, string $nombre): Cliente
     {
         return Cliente::create(['id_cliente' => $id, 'nombre_completo' => $nombre]);

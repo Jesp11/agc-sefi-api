@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Credito;
+use App\Models\Pago;
 use App\Http\Requests\StorePagoRequest;
 use App\Services\MoraCalculationService;
 use App\Services\PagoService;
@@ -66,5 +67,63 @@ class PagoController extends Controller
                 'total_pagos' => $totalPagos,
             ],
         ], 201);
+    }
+
+    public function update(Request $request, $numProg, Pago $pago)
+    {
+        $credito = Credito::with(['cliente', 'grupo', 'asesor'])->findOrFail($numProg);
+        $this->validarPagoDelCredito($credito, $pago);
+
+        if ($pago->tipo !== 'Abono') {
+            return response()->json(['message' => 'Solo los abonos pueden editarse desde este historial.'], 422);
+        }
+
+        $hora = $request->input('hora');
+        if (is_string($hora) && preg_match('/^\d{2}:\d{2}$/', $hora)) {
+            $request->merge(['hora' => "{$hora}:00"]);
+        }
+
+        $data = $request->validate([
+            'monto' => ['required', 'numeric', 'min:0.01'],
+            'fecha' => ['required', 'date'],
+            'hora' => ['nullable', 'date_format:H:i:s'],
+            'metodo_pago' => ['required', 'in:Efectivo,Transferencia,Otro'],
+            'notas' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        try {
+            $pago = $this->pagoService->actualizarAbono($credito, $pago, $data);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json([
+            'message' => 'Abono actualizado exitosamente.',
+            'data' => $pago,
+        ]);
+    }
+
+    public function sincronizarCaja($numProg, Pago $pago)
+    {
+        $credito = Credito::with(['cliente', 'grupo', 'asesor'])->findOrFail($numProg);
+        $this->validarPagoDelCredito($credito, $pago);
+
+        if ($pago->tipo !== 'Abono') {
+            return response()->json(['message' => 'Solo los abonos pueden sincronizarse con Flujo de Caja.'], 422);
+        }
+
+        $movimiento = $this->pagoService->sincronizarEnCaja($credito, $pago);
+
+        return response()->json([
+            'message' => 'Ingreso sincronizado correctamente con Flujo de Caja.',
+            'data' => $movimiento,
+        ]);
+    }
+
+    private function validarPagoDelCredito(Credito $credito, Pago $pago): void
+    {
+        if ((int) $pago->num_prog !== (int) $credito->num_prog) {
+            abort(404);
+        }
     }
 }

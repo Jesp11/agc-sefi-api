@@ -5,7 +5,9 @@ namespace Tests\Feature;
 use App\Models\Asesor;
 use App\Models\Cliente;
 use App\Models\Credito;
+use App\Models\MovimientoCaja;
 use App\Models\Pago;
+use App\Services\FlujoCajaService;
 use App\Services\PagosRutaImportService;
 use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
@@ -86,6 +88,44 @@ class PagosRutaImportServiceTest extends TestCase
         $this->assertSame(0, $preview['summary']['invalid']);
         $this->assertSame(1, $preview['summary']['omitted']);
         $this->assertStringContainsString('pago manual', $preview['rows'][0]['warnings'][0]);
+    }
+
+    public function test_syncing_a_historical_payment_creates_and_then_updates_one_cash_income(): void
+    {
+        $credito = $this->credito();
+        $pago = Pago::create([
+            'num_prog' => $credito->num_prog,
+            'monto' => 873,
+            'fecha' => '2026-08-29',
+            'hora' => '10:00:00',
+            'tipo' => 'Abono',
+            'metodo_pago' => 'Efectivo',
+        ]);
+        $flujoCaja = app(FlujoCajaService::class);
+
+        $flujoCaja->sincronizarDesdePago($pago, $credito);
+
+        $this->assertDatabaseHas('movimientos_caja', [
+            'pago_id' => $pago->id,
+            'tipo' => 'Ingreso',
+            'monto' => 873,
+            'cuenta' => 'Efectivo',
+        ]);
+
+        $pago->update([
+            'monto' => 950,
+            'fecha' => '2026-09-05',
+            'metodo_pago' => 'Transferencia',
+        ]);
+        $flujoCaja->sincronizarDesdePago($pago->fresh(), $credito);
+
+        $this->assertSame(1, MovimientoCaja::where('pago_id', $pago->id)->count());
+        $this->assertSame(1, MovimientoCaja::query()
+            ->where('pago_id', $pago->id)
+            ->whereDate('fecha', '2026-09-05')
+            ->where('monto', 950)
+            ->where('cuenta', 'Bancomer')
+            ->count());
     }
 
     private function credito(): Credito

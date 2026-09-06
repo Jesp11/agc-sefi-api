@@ -161,6 +161,49 @@ class FlujoCajaService
         ]);
     }
 
+    /**
+     * Crea o actualiza el ingreso de caja asociado a un abono.
+     *
+     * Los pagos anteriores a la integración con Flujo de Caja no siempre
+     * tienen movimiento. Al sincronizarlos se conserva una sola referencia
+     * por pago y se recalculan los saldos desde la fecha más antigua afectada.
+     */
+    public function sincronizarDesdePago(Pago $pago, Credito $credito): ?MovimientoCaja
+    {
+        if ($pago->tipo !== 'Abono') {
+            return null;
+        }
+
+        $movimiento = MovimientoCaja::where('pago_id', $pago->id)->first();
+        if (! $movimiento) {
+            return $this->registrarDesdePago($pago, $credito);
+        }
+
+        return DB::transaction(function () use ($movimiento, $pago, $credito) {
+            $fechaAnterior = $movimiento->fecha->format('Y-m-d');
+            $clienteNombre = $credito->cliente?->nombre_completo
+                ?? $credito->grupo?->nombre_grupo
+                ?? 'Crédito #'.$credito->num_prog;
+
+            $movimiento->update([
+                'fecha' => $pago->fecha->format('Y-m-d'),
+                'id_asesor' => $credito->id_asesor,
+                'motivo' => "COBRO CRÉDITO #{$credito->num_prog} — {$clienteNombre}",
+                'tipo' => 'Ingreso',
+                'monto' => abs((float) $pago->monto),
+                'categoria' => 'CobroCartera',
+                'cuenta' => $this->mapMetodoPagoCuenta($pago->metodo_pago),
+                'num_prog' => $credito->num_prog,
+                'pago_id' => $pago->id,
+                'referencia' => "PAGO-{$pago->id}",
+            ]);
+
+            $this->recalcularSaldosDesde(min($fechaAnterior, $pago->fecha->format('Y-m-d')));
+
+            return $movimiento->fresh(['asesor', 'credito.cliente', 'credito.grupo']);
+        });
+    }
+
     public function registrarDesdeGasto(GastoOperativo $gasto): MovimientoCaja
     {
         if (MovimientoCaja::where('referencia', "GASTO-{$gasto->id}")->exists()) {

@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\AhorroPersonal;
 use App\Models\AhorroPersonalMovimiento;
 use App\Models\Credito;
+use App\Models\MovimientoCaja;
 use App\Models\Pago;
 use App\Support\RoleHelper;
 use Illuminate\Support\Facades\Auth;
@@ -109,6 +110,36 @@ class PagoService
             ->orderByDesc('hora')
             ->orderByDesc('id')
             ->get();
+    }
+
+    /** Actualiza un abono histórico y conserva la caja vinculada, si existe. */
+    public function actualizarAbono(Credito $credito, Pago $pago, array $data): Pago
+    {
+        return DB::transaction(function () use ($credito, $pago, $data) {
+            $pago->update([
+                'monto' => $data['monto'],
+                'fecha' => $data['fecha'],
+                'hora' => $data['hora'] ?? $pago->hora,
+                'metodo_pago' => $data['metodo_pago'],
+                'notas' => $data['notas'] ?? null,
+            ]);
+
+            // Una edición no crea registros contables retroactivos por sí sola.
+            // Si ya había ingreso enlazado, sí debe reflejar el cambio.
+            if (MovimientoCaja::where('pago_id', $pago->id)->exists()) {
+                $this->flujoCajaService->sincronizarDesdePago($pago->fresh(), $credito);
+            }
+
+            $this->syncCredito($credito);
+
+            return $pago->fresh('registradoPor');
+        });
+    }
+
+    /** Genera o corrige el ingreso de Flujo de Caja de un abono existente. */
+    public function sincronizarEnCaja(Credito $credito, Pago $pago): ?MovimientoCaja
+    {
+        return $this->flujoCajaService->sincronizarDesdePago($pago, $credito);
     }
 
     private function registrarAhorroPersonalDesdePago(Credito $credito, Pago $pago, float $monto): void

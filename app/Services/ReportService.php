@@ -318,6 +318,7 @@ class ReportService
                 'saldo_inversion' => $saldoInversion,
                 'semanas_restantes' => $semanasRestantes,
                 'pagos_programados' => $this->buildPagosProgramados($credito),
+                'estado_pagos_programados' => $this->buildEstadoPagosProgramados($credito),
             ];
 
             if ($credito->tipo_credito === 'Grupal') {
@@ -1039,6 +1040,37 @@ class ReportService
         }
 
         return $pagos;
+    }
+
+    /**
+     * Aplica los abonos a las cuotas de más antigua a más reciente, igual que
+     * el cálculo de saldo y mora. Esto permite distinguir una cuota pagada de
+     * una cuota solamente programada en el reporte de cartera.
+     */
+    private function buildEstadoPagosProgramados(Credito $credito): array
+    {
+        $schedule = $this->moraService->generateSchedule($credito);
+        $abonos = $credito->relationLoaded('pagos')
+            ? $credito->pagos->where('tipo', 'Abono')->sum('monto')
+            : $credito->pagos()->where('tipo', 'Abono')->sum('monto');
+        $disponible = max(0, (float) ($credito->abonos_historicos ?? 0) + (float) $abonos);
+        $cuotas = [];
+
+        for ($i = 0; $i < 16; $i++) {
+            $montoProgramado = round((float) ($schedule[$i]['pago'] ?? 0), 2);
+            $montoAplicado = min($montoProgramado, $disponible);
+            $disponible = max(0, $disponible - $montoAplicado);
+
+            $cuotas[] = [
+                'estado' => $montoProgramado <= 0
+                    ? 'No programado'
+                    : ($montoAplicado >= $montoProgramado ? 'Pagado' : ($montoAplicado > 0 ? 'Parcial' : 'Pendiente')),
+                'monto_programado' => $montoProgramado,
+                'monto_aplicado' => round($montoAplicado, 2),
+            ];
+        }
+
+        return $cuotas;
     }
 
     private function buildGroupMetrics(Credito $credito, float $saldoTotal): array
