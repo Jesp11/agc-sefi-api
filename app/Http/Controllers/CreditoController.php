@@ -195,6 +195,20 @@ class CreditoController extends Controller
     {
         $credito = Credito::findOrFail($id);
         $data = $request->validated();
+
+        // Compatibilidad con instalaciones que aún tienen caché de rutas: la
+        // misma actualización estándar acepta la distribución documental.
+        if (array_key_exists('distribucion_integrantes', $data)) {
+            $this->distribucionService->guardar($credito, $data['distribucion_integrantes']);
+            $credito->load(['distribucionesIntegrantes.cliente', 'grupo.clientes']);
+
+            return response()->json([
+                'message' => 'Distribución documental guardada. Los movimientos y pagos del grupo no fueron modificados.',
+                'data' => $credito->distribucionesIntegrantes,
+                'distribucion_documental' => $this->distribucionService->resumen($credito),
+            ]);
+        }
+
         $montoOtorgadoAnterior = (float) $credito->monto_otorgado;
         $comisionAperturaAnterior = (float) ($credito->comision_apertura ?? 0);
         $refinanciamiento = $credito->refinanciamientos()->first();

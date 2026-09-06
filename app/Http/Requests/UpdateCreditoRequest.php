@@ -50,6 +50,9 @@ class UpdateCreditoRequest extends FormRequest
             'fecha_programada_renovacion' => 'sometimes|nullable|date',
             'renovacion_autorizada' => 'sometimes|nullable|string|max:50',
             'renovacion_tasa' => 'sometimes|nullable|string|max:50',
+            'distribucion_integrantes' => 'sometimes|array|min:1',
+            'distribucion_integrantes.*.id_cliente' => 'required_with:distribucion_integrantes|string|exists:clientes,id_cliente',
+            'distribucion_integrantes.*.capital' => 'required_with:distribucion_integrantes|numeric|gt:0',
         ];
     }
 }
