@@ -301,10 +301,16 @@ class ReportService
         } elseif ($tipo === 'cerrados') {
             $query->whereIn('estado', ['CerradoSinRenovacion', 'Finalizado'])
                 ->whereDoesntHave('refinanciamientosComoAnterior.creditoNuevo', function ($q) {
-                    $q->where('estado', 'Activo');
+                    $q->whereIn('estado', ['Activo', 'EnMora']);
                 })
                 ->whereDoesntHave('creditosHijos', function ($q) {
-                    $q->where('estado', 'Activo');
+                    $q->whereIn('estado', ['Activo', 'EnMora']);
+                })
+                ->where(function ($q) {
+                    $q->whereNull('id_grupo')
+                        ->orWhereDoesntHave('grupo.creditos', function ($gq) {
+                            $gq->whereIn('estado', ['Activo', 'EnMora']);
+                        });
                 });
         } elseif ($tipo === 'general') {
             $query->where('estado', 'Activo');

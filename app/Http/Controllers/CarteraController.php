@@ -101,10 +101,18 @@ class CarteraController extends Controller
             // Un crédito sustituido por una renovación activa no representa
             // un cliente cerrado; su continuidad está en el crédito nuevo.
             ->whereDoesntHave('refinanciamientosComoAnterior.creditoNuevo', function ($q) {
-                $q->where('estado', 'Activo');
+                $q->whereIn('estado', ['Activo', 'EnMora']);
             })
             ->whereDoesntHave('creditosHijos', function ($q) {
-                $q->where('estado', 'Activo');
+                $q->whereIn('estado', ['Activo', 'EnMora']);
+            })
+            // Si el grupo tiene un crédito activo o en mora, el grupo sigue vigente y no debe
+            // figurar en la lista de cerrados aunque el crédito actual no provenga de renovación.
+            ->where(function ($q) {
+                $q->whereNull('id_grupo')
+                    ->orWhereDoesntHave('grupo.creditos', function ($gq) {
+                        $gq->whereIn('estado', ['Activo', 'EnMora']);
+                    });
             });
 
         if ($tipo === 'individual') {

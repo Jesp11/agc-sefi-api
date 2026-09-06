@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Asesor;
 use App\Models\Cliente;
 use App\Models\Credito;
+use App\Models\Grupo;
 use App\Models\Pago;
 use App\Models\Refinanciamiento;
 use App\Http\Controllers\CarteraController;
@@ -159,6 +160,25 @@ class PagosAtrasadosReportTest extends TestCase
         $this->assertSame([$cerradoSinRenovar->num_prog], $folios);
     }
 
+    public function test_closed_portfolio_excludes_group_with_active_credit_without_formal_renewal(): void
+    {
+        $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
+        $grupoActivo = Grupo::create(['nombre_grupo' => 'Grupo Las Rosas']);
+        $grupoCerrado = Grupo::create(['nombre_grupo' => 'Grupo Los Pinos']);
+
+        // Grupo con crédito finalizado pero con otro crédito activo no ligado por refinanciamiento
+        $creditoAnteriorGrupoActivo = $this->creditoGrupal($advisor, $grupoActivo, 'Finalizado', '2026-08-01', 4);
+        $creditoNuevoGrupoActivo = $this->creditoGrupal($advisor, $grupoActivo, 'Activo', '2026-09-01', 4);
+
+        // Grupo sin crédito activo (realmente cerrado)
+        $creditoGrupoCerrado = $this->creditoGrupal($advisor, $grupoCerrado, 'CerradoSinRenovacion', '2026-08-01', 4);
+
+        $response = app(CarteraController::class)->cerrados(new Request(['tipo' => 'grupal']));
+        $folios = array_column($response->getData(true)['data'], 'num_prog');
+
+        $this->assertSame([$creditoGrupoCerrado->num_prog], $folios);
+    }
+
     private function cliente(string $id, string $nombre): Cliente
     {
         return Cliente::create(['id_cliente' => $id, 'nombre_completo' => $nombre]);
@@ -180,6 +200,26 @@ class PagosAtrasadosReportTest extends TestCase
             'valor_ficha' => 100,
             'dias_pago' => 'SABADO',
             'tipo_credito' => 'Individual',
+            'estado' => $estado,
+        ]);
+    }
+
+    private function creditoGrupal(Asesor $asesor, Grupo $grupo, string $estado, string $fechaPrimerPago, int $plazos): Credito
+    {
+        return Credito::create([
+            'id_grupo' => $grupo->id,
+            'id_asesor' => $asesor->id,
+            'fecha_otorgacion' => '2026-07-25',
+            'fecha_primer_pago' => $fechaPrimerPago,
+            'ciclo' => 1,
+            'monto_otorgado' => 1000,
+            'interes' => 0,
+            'total' => $plazos * 100,
+            'saldo_pendiente' => $plazos * 100,
+            'plazos' => $plazos,
+            'valor_ficha' => 100,
+            'dias_pago' => 'SABADO',
+            'tipo_credito' => 'Grupal',
             'estado' => $estado,
         ]);
     }
