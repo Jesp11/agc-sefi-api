@@ -120,13 +120,20 @@ class FlujoCajaDesembolsoTest extends TestCase
 
         $flujoCaja->registrarDesdeDesembolso($credito, 5028);
         $credito->update(['monto_otorgado' => 4628]);
-        $flujoCaja->sincronizarDesembolso($credito, 3028);
+        $flujoCaja->sincronizarDesembolso(
+            $credito,
+            3028,
+            'RENOVACIÓN A 14 SEMANAS — Renovación',
+            'Renovacion',
+        );
 
         $referencia = "DESEMBOLSO-{$credito->num_prog}";
         $this->assertSame(1, MovimientoCaja::where('referencia', $referencia)->count());
         $this->assertDatabaseHas('movimientos_caja', [
             'referencia' => $referencia,
             'monto' => 3028.00,
+            'motivo' => 'RENOVACIÓN A 14 SEMANAS — Renovación',
+            'categoria' => 'Renovacion',
         ]);
     }
 

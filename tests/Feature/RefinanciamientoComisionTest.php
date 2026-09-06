@@ -130,7 +130,10 @@ class RefinanciamientoComisionTest extends TestCase
 
         $flujo = Mockery::mock(FlujoCajaService::class);
         $flujo->shouldReceive('sincronizarDesembolso')->once()->withArgs(
-            fn (Credito $credito, float $monto) => $credito->is($creditoNuevo) && $monto === 3028.0,
+            fn (Credito $credito, float $monto, string $motivo, string $categoria) => $credito->is($creditoNuevo)
+                && $monto === 3028.0
+                && $motivo === "RENOVACIÓN A 16 SEMANAS — Crédito #{$creditoNuevo->num_prog}"
+                && $categoria === 'Renovacion',
         );
         $service = new RefinanciamientoService(
             Mockery::mock(MoraCalculationService::class),

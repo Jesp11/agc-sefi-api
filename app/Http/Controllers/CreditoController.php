@@ -209,6 +209,27 @@ class CreditoController extends Controller
             ]);
         }
 
+        // Permite reparar de forma explícita renovaciones históricas cuyo
+        // efectivo neto o egreso se haya guardado con una cifra anterior.
+        // No se actualiza el contrato, pagos ni saldo pendiente.
+        if (!empty($data['sincronizar_refinanciamiento'])) {
+            $montoNeto = $this->refinanciamientoService->sincronizarMontoEntregado($credito);
+
+            if ($montoNeto === null) {
+                return response()->json([
+                    'message' => 'Este crédito no proviene de una refinanciación.',
+                ], 422);
+            }
+
+            return response()->json([
+                'message' => 'Efectivo neto y movimiento de egreso sincronizados.',
+                'data' => [
+                    'num_prog' => $credito->num_prog,
+                    'monto_neto' => $montoNeto,
+                ],
+            ]);
+        }
+
         $montoOtorgadoAnterior = (float) $credito->monto_otorgado;
         $comisionAperturaAnterior = (float) ($credito->comision_apertura ?? 0);
         $refinanciamiento = $credito->refinanciamientos()->first();

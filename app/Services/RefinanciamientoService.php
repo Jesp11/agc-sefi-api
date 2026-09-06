@@ -170,9 +170,15 @@ class RefinanciamientoService
 
         $montoNeto = max(0, $montoNeto);
 
-        DB::transaction(function () use ($credito, $refinanciamiento, $montoNeto) {
+        $credito->loadMissing(['cliente', 'grupo']);
+        $beneficiario = $credito->cliente?->nombre_completo
+            ?? $credito->grupo?->nombre_grupo
+            ?? "Crédito #{$credito->num_prog}";
+        $motivo = "RENOVACIÓN A {$credito->plazos} SEMANAS — {$beneficiario}";
+
+        DB::transaction(function () use ($credito, $refinanciamiento, $montoNeto, $motivo) {
             $refinanciamiento->update(['monto_neto' => $montoNeto]);
-            $this->flujoCajaService->sincronizarDesembolso($credito, $montoNeto);
+            $this->flujoCajaService->sincronizarDesembolso($credito, $montoNeto, $motivo, 'Renovacion');
         });
 
         return $montoNeto;
