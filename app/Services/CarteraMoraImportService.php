@@ -17,6 +17,7 @@ class CarteraMoraImportService
         private readonly AsesorService $asesorService,
         private readonly ClienteService $clienteService,
         private readonly MoraCalculationService $moraCalculationService,
+        private readonly DistribucionCreditoGrupalService $distribucionService,
     ) {}
 
     public function importar(array $rows): array
@@ -129,12 +130,14 @@ class CarteraMoraImportService
         $asesor = $this->resolveAsesor((string) ($first['asesor'] ?? ''), $stats);
         $grupo = $this->resolveOrCreateGrupo($groupName, $asesor->id, $stats);
 
+        $integrantesImportados = [];
         foreach ($rows as $row) {
             $cliente = $this->resolveOrCreateCliente($row, $asesor->id, $stats);
             if (! $grupo->clientes()->where('clientes.id_cliente', $cliente->id_cliente)->exists()) {
                 $grupo->clientes()->attach($cliente->id_cliente);
                 $stats['vinculos_grupo']++;
             }
+            $integrantesImportados[] = ['cliente' => $cliente, 'row' => $row];
         }
 
         $fechaOtorgacion = (string) ($first['fecha'] ?? '');
@@ -164,9 +167,11 @@ class CarteraMoraImportService
             'saldo_inversion' => $saldoInversion,
             'valor_ficha' => $valorFicha,
             'plazos' => $plazos,
-            'integrantes' => array_map(function (array $row) {
+            'comision_apertura' => round($grupo->clientes()->count() * 100, 2),
+            'integrantes' => array_map(function (array $item) {
+                $row = $item['row'];
                 return [
-                    'id_cliente' => $row['id_cliente'] ?? null,
+                    'id_cliente' => $item['cliente']->id_cliente,
                     'cliente' => $row['cliente'] ?? null,
                     'monto_otorgado' => (float) ($row['monto_otorgado'] ?? 0),
                     'interes' => (float) ($row['interes'] ?? 0),
@@ -174,7 +179,7 @@ class CarteraMoraImportService
                     'saldo_total' => (float) ($row['saldo_total'] ?? 0),
                     'saldo_inversion' => (float) ($row['saldo_inversion'] ?? 0),
                 ];
-            }, $rows),
+            }, $integrantesImportados),
         ], 'Grupal', $asesor->id, null, $grupo->id);
 
         if ($credito) {
@@ -187,6 +192,16 @@ class CarteraMoraImportService
         }
 
         $this->syncMoraState($credito);
+        $this->distribucionService->sincronizarDesdeImportacion($credito, array_map(
+            fn (array $item) => [
+                'id_cliente' => $item['cliente']->id_cliente,
+                'capital' => $item['row']['monto_otorgado'] ?? null,
+                'interes' => $item['row']['interes'] ?? null,
+                'total' => $item['row']['total'] ?? null,
+                'valor_ficha' => $item['row']['valor_ficha'] ?? null,
+            ],
+            $integrantesImportados,
+        ));
     }
 
     private function buildCreditPayload(array $row, string $tipo, int $asesorId, ?string $clienteId, ?int $grupoId): array
@@ -236,7 +251,7 @@ class CarteraMoraImportService
             'estado' => 'EnMora',
             'es_personalizado' => true,
             'es_adicional' => false,
-            'comision_apertura' => 100,
+            'comision_apertura' => round((float) ($row['comision_apertura'] ?? 100), 2),
             'porcentaje_interes' => $monto > 0 ? round(($interes / $monto) * 100, 2) : 0,
             'tabla_amortizacion' => $metadata,
         ];

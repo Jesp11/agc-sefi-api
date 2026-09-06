@@ -40,7 +40,9 @@ class StoreCreditoRequest extends FormRequest
             'tasa_asignada' => 'nullable|string|max:50',
             'porcentaje_interes' => 'nullable|numeric|min:0',
             'tabla_amortizacion' => 'nullable|array',
+            'distribucion_integrantes' => 'required_with:id_grupo|array|min:1',
+            'distribucion_integrantes.*.id_cliente' => 'required|string|exists:clientes,id_cliente',
+            'distribucion_integrantes.*.capital' => 'required|numeric|gt:0',
         ];
     }
 }
-

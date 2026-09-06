@@ -12,9 +12,12 @@ use App\Services\CicloService;
 use App\Services\CreditoEliminacionBloqueadaException;
 use App\Services\CreditoEliminacionDesactualizadaException;
 use App\Services\CreditoEliminacionService;
+use App\Services\DistribucionCreditoGrupalService;
 use App\Services\FlujoCajaService;
 use App\Services\MoraCalculationService;
+use App\Services\RefinanciamientoService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class CreditoController extends Controller
 {
@@ -22,7 +25,9 @@ class CreditoController extends Controller
         private CicloService $cicloService,
         private FlujoCajaService $flujoCajaService,
         private MoraCalculationService $moraService,
-        private CreditoEliminacionService $creditoEliminacionService
+        private CreditoEliminacionService $creditoEliminacionService,
+        private DistribucionCreditoGrupalService $distribucionService,
+        private RefinanciamientoService $refinanciamientoService,
     ) {}
 
     public function index(Request $request)
@@ -40,6 +45,9 @@ class CreditoController extends Controller
     public function store(StoreCreditoRequest $request)
     {
         $data = $request->validated();
+        $distribucionIntegrantes = $data['distribucion_integrantes'] ?? null;
+        unset($data['distribucion_integrantes']);
+        $comisionApertura = 100.00;
 
         $esPersonalizado = !empty($data['es_personalizado']);
         $esAdicional = !empty($data['es_adicional']);
@@ -107,6 +115,9 @@ class CreditoController extends Controller
             $data['id_asesor'] = $grupo->id_asesor;
             $data['tipo_credito'] = 'Grupal';
             $data['id_cliente'] = null;
+            // En créditos grupales la comisión es $100 por integrante, no
+            // una sola comisión para todo el grupo.
+            $comisionApertura = round($grupo->clientes->count() * 100, 2);
 
             if ($grupo->es_socio_preferencial ?? false) {
                 $data['es_personalizado'] = true;
@@ -115,17 +126,25 @@ class CreditoController extends Controller
         }
 
         $data['ciclo'] = $this->cicloService->calcularCiclo($data['id_cliente'] ?? null, $data['id_grupo'] ?? null);
-        $data['comision_apertura'] = $data['comision_apertura'] ?? 100.00;
+        $data['comision_apertura'] = $data['tipo_credito'] === 'Grupal'
+            ? $comisionApertura
+            : ($data['comision_apertura'] ?? $comisionApertura);
         $data['saldo_pendiente'] = $data['total'];
         $data['es_adicional'] = $esAdicional;
 
-        $credito = Credito::create($data);
+        $credito = DB::transaction(function () use ($data, $distribucionIntegrantes) {
+            $credito = Credito::create($data);
+            if ($credito->tipo_credito === 'Grupal') {
+                $this->distribucionService->guardar($credito, $distribucionIntegrantes ?? []);
+            }
+            return $credito;
+        });
         $this->cicloService->registrarInicio($credito);
         $this->flujoCajaService->registrarDesdeDesembolso($credito, $this->montoNetoDesembolsado($credito));
 
         return response()->json([
             'message' => 'Crédito creado exitosamente',
-            'data' => $credito->load(['cliente', 'grupo', 'asesor']),
+            'data' => $credito->load(['cliente', 'grupo', 'asesor', 'distribucionesIntegrantes.cliente']),
         ], 201);
     }
 
@@ -137,6 +156,7 @@ class CreditoController extends Controller
             'cliente.documentos',
             'cliente.referencias',
             'grupo.clientes',
+            'distribucionesIntegrantes.cliente',
             'grupo.asesor',
             'asesor',
             'pagos',
@@ -149,7 +169,26 @@ class CreditoController extends Controller
         return response()->json(array_merge($credito->toArray(), [
             'mora' => $mora,
             'dias_mora' => $mora['dias_mora'],
+            'distribucion_documental' => $this->distribucionService->resumen($credito),
         ]));
+    }
+
+    public function actualizarDistribucion(Request $request, $id)
+    {
+        $data = $request->validate([
+            'integrantes' => ['required', 'array', 'min:1'],
+            'integrantes.*.id_cliente' => ['required', 'string', 'exists:clientes,id_cliente'],
+            'integrantes.*.capital' => ['required', 'numeric', 'gt:0'],
+        ]);
+        $credito = Credito::findOrFail($id);
+        $this->distribucionService->guardar($credito, $data['integrantes']);
+        $credito->load(['distribucionesIntegrantes.cliente', 'grupo.clientes']);
+
+        return response()->json([
+            'message' => 'Distribución documental guardada. Los movimientos y pagos del grupo no fueron modificados.',
+            'data' => $credito->distribucionesIntegrantes,
+            'distribucion_documental' => $this->distribucionService->resumen($credito),
+        ]);
     }
 
     public function update(UpdateCreditoRequest $request, $id)
@@ -158,6 +197,7 @@ class CreditoController extends Controller
         $data = $request->validated();
         $montoOtorgadoAnterior = (float) $credito->monto_otorgado;
         $comisionAperturaAnterior = (float) ($credito->comision_apertura ?? 0);
+        $refinanciamiento = $credito->refinanciamientos()->first();
 
         if (isset($data['id_cliente'])) {
             $cliente = Cliente::findOrFail($data['id_cliente']);
@@ -169,24 +209,47 @@ class CreditoController extends Controller
             $data['id_asesor'] = $grupo->id_asesor;
             $data['tipo_credito'] = 'Grupal';
             $data['id_cliente'] = null;
+            $data['comision_apertura'] = round($grupo->clientes()->count() * 100, 2);
+        } elseif ($credito->tipo_credito === 'Grupal') {
+            // También protege actualizaciones parciales hechas por API: el
+            // importe se vuelve a obtener de los integrantes vigentes.
+            $data['comision_apertura'] = round($credito->grupo()->first()?->clientes()->count() * 100, 2);
         }
 
-        $credito->update($data);
-
-        $montoOtorgadoCambio = array_key_exists('monto_otorgado', $data)
-            && abs($montoOtorgadoAnterior - (float) $credito->monto_otorgado) >= 0.005;
-        $comisionAperturaCambio = array_key_exists('comision_apertura', $data)
-            && abs($comisionAperturaAnterior - (float) ($credito->comision_apertura ?? 0)) >= 0.005;
-        $montoNetoDesembolsado = $this->montoNetoDesembolsado($credito);
-
-        if ($montoOtorgadoCambio || $comisionAperturaCambio) {
-            $this->flujoCajaService->sincronizarDesembolso($credito, $montoNetoDesembolsado);
-        } else {
-            // Al guardar un crédito histórico, crea el egreso que faltaba.
-            // registrarDesdeDesembolso es idempotente por referencia, por lo
-            // que un movimiento existente no se duplica ni se modifica.
-            $this->flujoCajaService->registrarDesdeDesembolso($credito, $montoNetoDesembolsado);
+        if ($refinanciamiento && (array_key_exists('monto_otorgado', $data) || array_key_exists('comision_apertura', $data))) {
+            $montoNuevo = (float) ($data['monto_otorgado'] ?? $credito->monto_otorgado);
+            $comisionNueva = (float) ($data['comision_apertura'] ?? ($credito->comision_apertura ?? 0));
+            $minimo = round((float) $refinanciamiento->deduccion + $comisionNueva, 2);
+            if ($montoNuevo + 0.004 < $minimo) {
+                return response()->json([
+                    'message' => 'El monto otorgado no puede ser menor al saldo absorbido más la comisión de apertura.',
+                ], 422);
+            }
         }
+
+        DB::transaction(function () use ($credito, $data, $montoOtorgadoAnterior, $comisionAperturaAnterior, $refinanciamiento) {
+            $credito->update($data);
+
+            $montoOtorgadoCambio = array_key_exists('monto_otorgado', $data)
+                && abs($montoOtorgadoAnterior - (float) $credito->monto_otorgado) >= 0.005;
+            $comisionAperturaCambio = array_key_exists('comision_apertura', $data)
+                && abs($comisionAperturaAnterior - (float) ($credito->comision_apertura ?? 0)) >= 0.005;
+            $montoNetoDesembolsado = $this->montoNetoDesembolsado($credito);
+
+            if ($refinanciamiento) {
+                // En una renovación el efectivo entregado no es el monto bruto:
+                // conserva la deducción del saldo absorbido y actualiza a la vez
+                // refinanciamiento.monto_neto y su egreso DESEMBOLSO-{folio}.
+                $this->refinanciamientoService->sincronizarMontoEntregado($credito);
+            } elseif ($montoOtorgadoCambio || $comisionAperturaCambio) {
+                $this->flujoCajaService->sincronizarDesembolso($credito, $montoNetoDesembolsado);
+            } else {
+                // Al guardar un crédito histórico, crea el egreso que faltaba.
+                // registrarDesdeDesembolso es idempotente por referencia, por lo
+                // que un movimiento existente no se duplica ni se modifica.
+                $this->flujoCajaService->registrarDesdeDesembolso($credito, $montoNetoDesembolsado);
+            }
+        });
 
         if (isset($data['abono_recuperacion'])) {
             $this->moraService->syncCreditoState($credito->fresh()->load('pagos'));

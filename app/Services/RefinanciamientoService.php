@@ -47,7 +47,9 @@ class RefinanciamientoService
             $mora = $this->moraService->calculate($creditoAnterior->load('pagos'));
             // Las multas no forman parte del saldo del préstamo (van al asesor).
             $saldoAnterior = (float) $mora['saldo_actual'];
-            $comisionApertura = round((float) ($data['comision_apertura'] ?? 100.00), 2);
+            $comisionApertura = $creditoAnterior->tipo_credito === 'Grupal'
+                ? round($creditoAnterior->grupo()->first()?->clientes()->count() * 100, 2)
+                : round((float) ($data['comision_apertura'] ?? 100.00), 2);
 
             $montoOtorgado = (float) $data['monto_otorgado'];
             if ($montoOtorgado < $saldoAnterior + $comisionApertura) {
@@ -141,5 +143,38 @@ class RefinanciamientoService
 
             return $nuevoCredito->load(['cliente', 'grupo', 'asesor', 'creditoPadre']);
         });
+    }
+
+    /**
+     * Mantiene el efectivo realmente entregado de una renovación alineado con
+     * su crédito. El saldo absorbido no cambia al editar el monto nuevo, por
+     * lo que se conserva como deducción histórica y se recalcula el neto.
+     */
+    public function sincronizarMontoEntregado(Credito $credito): ?float
+    {
+        $refinanciamiento = Refinanciamiento::where('num_prog_nuevo', $credito->num_prog)->first();
+        if (! $refinanciamiento) {
+            return null;
+        }
+
+        $montoNeto = round(
+            (float) $credito->monto_otorgado
+                - (float) $refinanciamiento->deduccion
+                - (float) ($credito->comision_apertura ?? 0),
+            2,
+        );
+
+        if ($montoNeto < -0.004) {
+            throw new InvalidArgumentException('El monto otorgado no puede ser menor al saldo absorbido más la comisión de apertura.');
+        }
+
+        $montoNeto = max(0, $montoNeto);
+
+        DB::transaction(function () use ($credito, $refinanciamiento, $montoNeto) {
+            $refinanciamiento->update(['monto_neto' => $montoNeto]);
+            $this->flujoCajaService->sincronizarDesembolso($credito, $montoNeto);
+        });
+
+        return $montoNeto;
     }
 }

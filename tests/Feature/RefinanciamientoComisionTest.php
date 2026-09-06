@@ -115,6 +115,35 @@ class RefinanciamientoComisionTest extends TestCase
         ]);
     }
 
+    public function test_editing_a_refinanced_credit_recalculates_net_delivery_and_syncs_its_cash_outflow(): void
+    {
+        $creditoNuevo = Credito::create([
+            'id_cliente' => 'CLI-001', 'id_asesor' => 1, 'fecha_otorgacion' => '2026-09-01', 'fecha_primer_pago' => '2026-09-08',
+            'ciclo' => 2, 'monto_otorgado' => 6628, 'interes' => 0, 'total' => 6628, 'saldo_pendiente' => 6628,
+            'plazos' => 16, 'valor_ficha' => 414.25, 'dias_pago' => 'LUNES', 'tipo_credito' => 'Individual', 'estado' => 'Activo', 'comision_apertura' => 100,
+        ]);
+        Refinanciamiento::create([
+            'num_prog_anterior' => 99, 'num_prog_nuevo' => $creditoNuevo->num_prog,
+            'saldo_anterior' => 1500, 'deduccion' => 1500, 'monto_neto' => 5028,
+        ]);
+        $creditoNuevo->update(['monto_otorgado' => 4628]);
+
+        $flujo = Mockery::mock(FlujoCajaService::class);
+        $flujo->shouldReceive('sincronizarDesembolso')->once()->withArgs(
+            fn (Credito $credito, float $monto) => $credito->is($creditoNuevo) && $monto === 3028.0,
+        );
+        $service = new RefinanciamientoService(
+            Mockery::mock(MoraCalculationService::class),
+            Mockery::mock(CicloService::class),
+            $flujo,
+            Mockery::mock(PagoService::class),
+            Mockery::mock(IndicadoresOperativosService::class),
+        );
+
+        $this->assertSame(3028.0, $service->sincronizarMontoEntregado($creditoNuevo));
+        $this->assertSame(3028.0, (float) Refinanciamiento::firstOrFail()->monto_neto);
+    }
+
     private function createSchema(): void
     {
         foreach (['refinanciamientos', 'pagos', 'creditos', 'clientes', 'grupos', 'asesores'] as $table) {

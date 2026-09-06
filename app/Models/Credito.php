@@ -102,4 +102,9 @@ class Credito extends Model
     {
         return $this->hasMany(DocumentoCredito::class, 'num_prog', 'num_prog');
     }
+
+    public function distribucionesIntegrantes()
+    {
+        return $this->hasMany(CreditoGrupalDistribucion::class, 'num_prog', 'num_prog')->orderBy('orden');
+    }
 }

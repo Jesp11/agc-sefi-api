@@ -106,6 +106,52 @@ class FlujoCajaDesembolsoTest extends TestCase
         ]);
     }
 
+    public function test_syncing_a_restructured_delivery_replaces_5028_with_3028(): void
+    {
+        Cliente::create(['id_cliente' => 'CLI-REN', 'nombre_completo' => 'Renovación']);
+        $credito = Credito::create([
+            'id_cliente' => 'CLI-REN',
+            'id_asesor' => 1,
+            'fecha_otorgacion' => '2026-09-05',
+            'monto_otorgado' => 6628,
+            'comision_apertura' => 100,
+        ]);
+        $flujoCaja = app(FlujoCajaService::class);
+
+        $flujoCaja->registrarDesdeDesembolso($credito, 5028);
+        $credito->update(['monto_otorgado' => 4628]);
+        $flujoCaja->sincronizarDesembolso($credito, 3028);
+
+        $referencia = "DESEMBOLSO-{$credito->num_prog}";
+        $this->assertSame(1, MovimientoCaja::where('referencia', $referencia)->count());
+        $this->assertDatabaseHas('movimientos_caja', [
+            'referencia' => $referencia,
+            'monto' => 3028.00,
+        ]);
+    }
+
+    public function test_updating_group_commission_updates_the_existing_disbursement(): void
+    {
+        Cliente::create(['id_cliente' => 'CLI-GRP', 'nombre_completo' => 'Grupo prueba']);
+        $credito = Credito::create([
+            'id_cliente' => 'CLI-GRP',
+            'id_asesor' => 1,
+            'fecha_otorgacion' => '2026-09-05',
+            'monto_otorgado' => 10000,
+            'comision_apertura' => 100,
+        ]);
+        $flujoCaja = app(FlujoCajaService::class);
+
+        $flujoCaja->registrarDesdeDesembolso($credito, 9900);
+        $credito->update(['comision_apertura' => 300]); // tres integrantes × $100
+        $flujoCaja->sincronizarDesembolso($credito, 9700);
+
+        $this->assertDatabaseHas('movimientos_caja', [
+            'referencia' => "DESEMBOLSO-{$credito->num_prog}",
+            'monto' => 9700.00,
+        ]);
+    }
+
     public function test_deleting_a_manual_movement_recalculates_following_balances(): void
     {
         $saldoInicial = MovimientoCaja::create([

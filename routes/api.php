@@ -63,6 +63,8 @@ Route::middleware('auth:api')->group(function () {
     Route::get('creditos/{credito}', [CreditoController::class, 'show']);
     // Escritura de cartera solo admin
     Route::post('creditos', [CreditoController::class, 'store'])->middleware('role:admin');
+    Route::put('creditos/{credito}/distribucion-integrantes', [CreditoController::class, 'actualizarDistribucion'])
+        ->middleware('role:admin');
     Route::put('creditos/{credito}', [CreditoController::class, 'update'])->middleware('role:admin');
     Route::patch('creditos/{credito}', [CreditoController::class, 'update'])->middleware('role:admin');
     Route::delete('creditos/{credito}', [CreditoController::class, 'destroy'])->middleware('role:admin');
