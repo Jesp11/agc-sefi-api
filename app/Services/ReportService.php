@@ -19,6 +19,7 @@ use App\Models\RecepcionAsesor;
 use App\Models\Refinanciamiento;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use SimpleXMLElement;
@@ -42,6 +43,15 @@ class ReportService
     public function reporteDiario(?string $fecha = null, ?int $idAsesor = null): array
     {
         $fecha = $fecha ?? now()->toDateString();
+        // En la vista administrativa este reporte es exclusivamente de
+        // cobranza. Los registros históricos sin rol se conservan como
+        // gestores para no ocultar rutas ya existentes.
+        $idsGestores = $idAsesor ? null : Asesor::query()
+            ->where(function ($query) {
+                $query->where('rol_laboral', 'Gestor de Cobranza')
+                    ->orWhereNull('rol_laboral');
+            })
+            ->pluck('id');
 
         $pagosQuery = Pago::with(['credito.cliente', 'credito.grupo', 'credito.asesor'])
             ->whereDate('fecha', $fecha);
@@ -55,37 +65,50 @@ class ReportService
             $creditosQuery->where('id_asesor', $idAsesor);
         } else {
             // Vista admin: solo abonos (las multas son íntegras del asesor).
-            $pagosQuery->where('tipo', 'Abono');
+            $pagosQuery->where('tipo', 'Abono')
+                ->whereHas('credito', fn ($q) => $q->whereIn('id_asesor', $idsGestores));
+            $creditosQuery->whereIn('id_asesor', $idsGestores);
         }
 
         $pagos = $pagosQuery->get();
         $creditos = $creditosQuery->get();
 
+        // Los créditos en mora no forman parte de la ruta ordinaria, pero sus
+        // cobros sí deben verse y contabilizarse en el corte del gestor.
+        $creditosMora = Credito::with(['cliente', 'grupo', 'asesor', 'pagos'])
+            ->where('estado', 'EnMora')
+            ->when($idAsesor, fn ($query) => $query->where('id_asesor', $idAsesor))
+            ->when($idsGestores !== null, fn ($query) => $query->whereIn('id_asesor', $idsGestores))
+            ->get()
+            ->map(function (Credito $credito) use ($fecha) {
+                $mora = $this->moraService->calculate($credito);
+                $pagadoHoy = $credito->pagos
+                    ->where('tipo', 'Abono')
+                    ->contains(fn ($pago) => $pago->fecha
+                        && Carbon::parse($pago->fecha)->isSameDay(Carbon::parse($fecha)));
+
+                return [
+                    'num_prog' => $credito->num_prog,
+                    'id_asesor' => $credito->id_asesor,
+                    'tipo_credito' => $credito->tipo_credito,
+                    'dias_pago' => $credito->dias_pago,
+                    'saldo_actual' => (float) ($mora['saldo_actual'] ?? $credito->saldo_pendiente ?? 0),
+                    'dias_mora' => (int) ($mora['dias_mora'] ?? $credito->dias_mora_cache ?? 0),
+                    'pagado_hoy' => $pagadoHoy,
+                    'cliente' => $credito->cliente?->toArray() ?? [],
+                    'grupo' => $credito->grupo?->toArray(),
+                ];
+            })
+            ->values();
+
         // Obtener cobranza programada (cuotas del día + atrasados) según día de la semana / amortización
         $cobrosDelDiaData = app(CarteraService::class)->cobrosDelDia($fecha, $idAsesor);
         $cobrosProgramados = collect($cobrosDelDiaData['cobros'] ?? [])
             ->filter(fn ($cobro) => ($cobro['estado'] ?? null) !== 'EnMora')
+            ->when($idsGestores !== null, fn ($cobros) => $cobros->filter(
+                fn ($cobro) => $idsGestores->contains((int) ($cobro['asesor']['id'] ?? 0))
+            ))
             ->values();
-
-        $creditosEnMora = collect($cobrosDelDiaData['cobros'] ?? [])
-            ->filter(fn ($cobro) => ($cobro['estado'] ?? null) === 'EnMora')
-            ->pluck('num_prog')
-            ->filter()
-            ->unique()
-            ->all();
-
-        $pagos = $pagos->filter(function ($pago) use ($creditosEnMora) {
-            $credito = $pago->credito;
-            if (! $credito) {
-                return false;
-            }
-
-            if ($credito->estado === 'EnMora') {
-                return false;
-            }
-
-            return ! in_array($credito->num_prog, $creditosEnMora, true);
-        })->values();
 
         $totalAbonosRegistrados = round((float) $pagos->where('tipo', 'Abono')->sum('monto'), 2);
         $montoColocado = round((float) $creditos->sum('monto_otorgado'), 2);
@@ -96,6 +119,7 @@ class ReportService
         ])
             ->whereDate('fecha_efectiva', $fecha)
             ->when($idAsesor, fn ($q) => $q->whereHas('creditoNuevo', fn ($cq) => $cq->where('id_asesor', $idAsesor)))
+            ->when($idsGestores !== null, fn ($q) => $q->whereHas('creditoNuevo', fn ($cq) => $cq->whereIn('id_asesor', $idsGestores)))
             ->orderBy('id')
             ->get()
             ->map(function (Refinanciamiento $renovacion) {
@@ -129,6 +153,7 @@ class ReportService
             'monto_colocado' => $montoColocado,
             'pagos' => $pagos->values(),
             'creditos' => $creditos,
+            'creditos_mora' => $creditosMora,
             'cobros_programados' => $cobrosProgramados->values(),
             'renovaciones_del_dia' => $renovacionesDelDia,
         ];
@@ -139,6 +164,7 @@ class ReportService
             $asesorIds = collect()
                 ->concat($pagos->pluck('credito.id_asesor'))
                 ->concat($cobrosProgramados->pluck('asesor.id'))
+                ->concat($creditosMora->pluck('id_asesor'))
                 ->concat($creditos->pluck('id_asesor'))
                 ->concat($renovacionesDelDia->pluck('id_asesor'))
                 ->filter()
@@ -152,6 +178,7 @@ class ReportService
                 $asesor = $asesoresModel->get((int) $aid);
                 $pagosAsesor = $pagos->filter(fn ($p) => ($p->credito?->id_asesor ?? 0) === (int) $aid);
                 $cobrosAsesor = $cobrosProgramados->filter(fn ($c) => ($c['asesor']['id'] ?? 0) === (int) $aid);
+                $moraAsesor = $creditosMora->where('id_asesor', (int) $aid);
                 $creditosAsesor = $creditos->where('id_asesor', (int) $aid);
 
                 $cobrado = round((float) $pagosAsesor->sum('monto'), 2);
@@ -190,16 +217,20 @@ class ReportService
                     'creditos_otorgados' => $creditosAsesor->count(),
                     'monto_colocado' => round((float) $creditosAsesor->sum('monto_otorgado'), 2),
                     'clientes_programados' => $cobrosAsesor->values(),
+                    'creditos_mora' => $moraAsesor->values(),
                 ];
             }
 
             $recepciones = RecepcionAsesor::whereDate('fecha', $fecha)
                 ->get()
                 ->keyBy('id_asesor');
+            $pagosPorAsesor = $pagos->groupBy(
+                fn (Pago $pago) => (int) ($pago->credito?->id_asesor ?? 0)
+            );
 
             $isHistorical = $fecha <= '2026-08-31';
 
-            $payload['por_asesor'] = collect($porAsesor)->map(function (array $row) use ($recepciones, $isHistorical) {
+            $payload['por_asesor'] = collect($porAsesor)->map(function (array $row) use ($recepciones, $pagosPorAsesor, $isHistorical) {
                 $recepcion = $row['id_asesor'] ? $recepciones->get($row['id_asesor']) : null;
                 $aRecibir = (float) $row['a_recibir'];
 
@@ -220,6 +251,18 @@ class ReportService
                 $row['recepcion_id'] = $recepcion?->id;
                 $row['recepcion_notas'] = $recepcion?->notas;
                 $row['recibido_at'] = $recepcion?->updated_at?->toDateTimeString();
+                // Distingue lo que se capturó después del último corte para
+                // que el administrador vea la diferencia sin tener que
+                // volver a sumar todos los abonos del gestor.
+                $abonosPosteriores = $recepcion?->updated_at
+                    ? (float) ($pagosPorAsesor->get((int) $row['id_asesor'], collect())
+                        ->filter(fn (Pago $pago) => $pago->created_at?->gt($recepcion->updated_at))
+                        ->sum('monto'))
+                    : 0;
+                $row['monto_posterior_corte'] = round(
+                    min($abonosPosteriores, (float) $row['pendiente_entrega']),
+                    2
+                );
 
                 return $row;
             })->values()->all();
@@ -246,7 +289,13 @@ class ReportService
     /**
      * Admin registra el efectivo recibido de un asesor en un día.
      */
-    public function registrarRecepcionAsesor(string $fecha, int $idAsesor, float $montoRecibido, ?string $notas = null): RecepcionAsesor
+    public function registrarRecepcionAsesor(
+        string $fecha,
+        int $idAsesor,
+        float $montoRecibido,
+        ?string $notas = null,
+        bool $agregar = false,
+    ): RecepcionAsesor
     {
         if ($montoRecibido < 0) {
             throw new InvalidArgumentException('El monto recibido no puede ser negativo.');
@@ -254,23 +303,71 @@ class ReportService
 
         Asesor::findOrFail($idAsesor);
 
-        $esperado = (float) Pago::whereDate('fecha', $fecha)
-            ->where('tipo', 'Abono')
-            ->whereHas('credito', fn ($q) => $q->where('id_asesor', $idAsesor))
-            ->sum('monto');
+        return DB::transaction(function () use ($fecha, $idAsesor, $montoRecibido, $notas, $agregar) {
+            // Bloquea el corte actual para que dos recepciones consecutivas no
+            // se pisen entre sí al usar la acción "Agregar".
+            $recepcion = RecepcionAsesor::whereDate('fecha', $fecha)
+                ->where('id_asesor', $idAsesor)
+                ->lockForUpdate()
+                ->first();
+            $montoFinal = round(
+                $agregar ? (float) ($recepcion?->monto_recibido ?? 0) + $montoRecibido : $montoRecibido,
+                2
+            );
 
-        return RecepcionAsesor::updateOrCreate(
-            [
-                'fecha' => $fecha,
-                'id_asesor' => $idAsesor,
-            ],
-            [
-                'monto_esperado' => round($esperado, 2),
-                'monto_recibido' => round($montoRecibido, 2),
+            // Sólo se lleva a caja lo que pertenece a la ruta, atrasados o
+            // mora. Un pago fuera de esas secciones no se presume entregado.
+            $cobros = app(CarteraService::class)->cobrosDelDia($fecha, $idAsesor);
+            $foliosElegibles = collect($cobros['cobros'] ?? [])
+                ->pluck('num_prog')
+                ->concat(collect($cobros['creditos_mora'] ?? [])->pluck('num_prog'))
+                ->filter()
+                ->unique()
+                ->values();
+
+            $pagos = Pago::with(['credito.cliente', 'credito.grupo'])
+                ->whereDate('fecha', $fecha)
+                ->where('tipo', 'Abono')
+                ->whereIn('num_prog', $foliosElegibles)
+                ->whereHas('credito', fn ($q) => $q->where('id_asesor', $idAsesor))
+                ->orderBy('hora')
+                ->orderBy('id')
+                ->get();
+
+            $esperado = round((float) $pagos->sum('monto'), 2);
+            $datosRecepcion = [
+                'monto_esperado' => $esperado,
+                'monto_recibido' => $montoFinal,
                 'notas' => $notas,
                 'registrado_por' => Auth::id(),
-            ]
-        )->load(['asesor', 'registradoPor:id,name']);
+            ];
+
+            if ($recepcion) {
+                $recepcion->update($datosRecepcion);
+            } else {
+                $recepcion = RecepcionAsesor::create([
+                    'fecha' => $fecha,
+                    'id_asesor' => $idAsesor,
+                    ...$datosRecepcion,
+                ]);
+            }
+
+            // En una recepción parcial se aplica el efectivo en orden de
+            // captura. Así nunca se contabiliza más de lo que llegó a caja.
+            $restante = min($montoFinal, $esperado);
+            foreach ($pagos as $pago) {
+                $aplicado = min($restante, (float) $pago->monto);
+                $this->flujoCajaService->sincronizarCobroRecibido(
+                    $pago,
+                    $pago->credito,
+                    $aplicado,
+                    $fecha,
+                );
+                $restante = round(max(0, $restante - $aplicado), 2);
+            }
+
+            return $recepcion->load(['asesor', 'registradoPor:id,name']);
+        });
     }
 
     public function cartera(string $tipo = 'general', ?int $idAsesor = null): array

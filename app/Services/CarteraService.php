@@ -68,6 +68,34 @@ class CarteraService
             }
         }
 
+        // La mora se presenta en una sección propia: no es parte de la ruta
+        // ordinaria ni de los atrasados, pero el gestor puede registrar su
+        // abono desde el reporte diario.
+        $creditosMora = Credito::with(['cliente', 'grupo', 'asesor', 'pagos'])
+            ->where('estado', 'EnMora')
+            ->when($idAsesor, fn ($q) => $q->where('id_asesor', $idAsesor))
+            ->get()
+            ->map(function (Credito $credito) use ($fechaRef) {
+                $mora = $this->moraService->calculate($credito);
+                $pagadoHoy = $credito->pagos
+                    ->where('tipo', 'Abono')
+                    ->contains(fn ($pago) => $pago->fecha
+                        && Carbon::parse($pago->fecha)->isSameDay($fechaRef));
+
+                return [
+                    'num_prog' => $credito->num_prog,
+                    'tipo_credito' => $credito->tipo_credito,
+                    'dias_pago' => $credito->dias_pago,
+                    'saldo_actual' => (float) ($mora['saldo_actual'] ?? $credito->saldo_pendiente ?? 0),
+                    'dias_mora' => (int) ($mora['dias_mora'] ?? $credito->dias_mora_cache ?? 0),
+                    'pagado_hoy' => $pagadoHoy,
+                    'cliente' => $credito->cliente?->toArray() ?? [],
+                    'grupo' => $credito->grupo?->toArray(),
+                    'asesor' => $credito->asesor?->toArray(),
+                ];
+            })
+            ->values();
+
         usort($cobros, function (array $a, array $b) {
             $orden = ['atrasado' => 0, 'del_dia' => 1];
             $cmp = ($orden[$a['categoria']] ?? 9) <=> ($orden[$b['categoria']] ?? 9);
@@ -80,7 +108,7 @@ class CarteraService
         $pagosDelDia = Pago::query()
             ->whereDate('fecha', $fechaRef->toDateString())
             ->whereHas('credito', function ($q) use ($idAsesor) {
-                $q->whereIn('estado', ['Activo', 'Finalizado']);
+                $q->whereIn('estado', ['Activo', 'Finalizado', 'EnMora']);
                 if ($idAsesor) {
                     $q->where('id_asesor', $idAsesor);
                 }
@@ -106,6 +134,7 @@ class CarteraService
             'num_abonos' => $pagosDelDia->where('tipo', 'Abono')->count(),
             'monto_multas' => round($montoMultas, 2),
             'cobros' => $cobros,
+            'creditos_mora' => $creditosMora,
         ];
     }
 
@@ -172,6 +201,15 @@ class CarteraService
         }
 
         $categoria = $esDiaPago ? 'del_dia' : 'atrasado';
+        // La ruta del día siempre cobra la ficha completa. Los abonos previos
+        // pueden servir para el saldo del crédito, pero no deben descontarse
+        // automáticamente de la cuota que se muestra al gestor.
+        $montoCobro = $categoria === 'del_dia'
+            ? (float) $credito->valor_ficha
+            : (float) $oldest['monto'];
+        if ($categoria === 'del_dia') {
+            $pendientesParaCobro[0]['monto'] = $montoCobro;
+        }
         $diasAtraso = 0;
         if ($tieneAtrasadas) {
             $diasAtraso = Carbon::parse($oldest['fecha'])->diffInDays($fechaRef);
@@ -185,7 +223,7 @@ class CarteraService
             'ciclo' => $credito->ciclo,
             'valor_ficha' => (float) $credito->valor_ficha,
             'saldo_pendiente' => (float) $credito->saldo_pendiente,
-            'monto_a_cobrar' => round($oldest['monto'], 2),
+            'monto_a_cobrar' => round($montoCobro, 2),
             'cuotas_pendientes' => count($pendientes), // Total real pendiente
             'cuotas_atrasadas' => collect($pendientes)->where('atrasada', true)->count(),
             'dias_atraso' => $diasAtraso,

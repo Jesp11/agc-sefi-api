@@ -103,23 +103,6 @@ class PagoController extends Controller
         ]);
     }
 
-    public function sincronizarCaja($numProg, Pago $pago)
-    {
-        $credito = Credito::with(['cliente', 'grupo', 'asesor'])->findOrFail($numProg);
-        $this->validarPagoDelCredito($credito, $pago);
-
-        if ($pago->tipo !== 'Abono') {
-            return response()->json(['message' => 'Solo los abonos pueden sincronizarse con Flujo de Caja.'], 422);
-        }
-
-        $movimiento = $this->pagoService->sincronizarEnCaja($credito, $pago);
-
-        return response()->json([
-            'message' => 'Ingreso sincronizado correctamente con Flujo de Caja.',
-            'data' => $movimiento,
-        ]);
-    }
-
     private function validarPagoDelCredito(Credito $credito, Pago $pago): void
     {
         if ((int) $pago->num_prog !== (int) $credito->num_prog) {

@@ -135,6 +135,85 @@ class PagosAtrasadosReportTest extends TestCase
         $this->assertSame(100.0, app(CarteraService::class)->cobrosDelDia('2026-08-08')['monto_a_cobrar']);
     }
 
+    public function test_daily_route_keeps_full_installment_despite_prior_credit_balance(): void
+    {
+        $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
+        $cliente = $this->cliente('CLI-001', 'Cliente Ana');
+        $credito = $this->credito($advisor, $cliente, 'Activo', '2026-08-01', 3);
+        Pago::create(['num_prog' => $credito->num_prog, 'monto' => 25, 'fecha' => '2026-08-01', 'hora' => '09:00:00', 'tipo' => 'Abono']);
+
+        $cobro = collect(app(CarteraService::class)->cobrosDelDia('2026-08-08')['cobros'])
+            ->firstWhere('num_prog', $credito->num_prog);
+
+        $this->assertNotNull($cobro);
+        $this->assertSame('del_dia', $cobro['categoria']);
+        $this->assertSame(100.0, $cobro['monto_a_cobrar']);
+        $this->assertSame(100.0, $cobro['pendientes'][0]['monto']);
+    }
+
+    public function test_daily_report_includes_mora_payments_in_advisor_total_and_mora_section(): void
+    {
+        $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
+        $cliente = $this->cliente('CLI-001', 'Cliente Ana');
+        $credito = $this->credito($advisor, $cliente, 'EnMora', '2026-08-01', 2);
+
+        Pago::create([
+            'num_prog' => $credito->num_prog,
+            'monto' => 75,
+            'fecha' => '2026-08-08',
+            'hora' => '09:00:00',
+            'tipo' => 'Abono',
+        ]);
+
+        $reporte = app(ReportService::class)->reporteDiario('2026-08-08');
+        $asesor = collect($reporte['por_asesor'])->firstWhere('id_asesor', $advisor->id);
+
+        $this->assertSame(75.0, $reporte['total_abonos']);
+        $this->assertNotNull($asesor);
+        $this->assertSame(75.0, $asesor['total_cobrado']);
+        $this->assertCount(1, $asesor['creditos_mora']);
+        $this->assertTrue($asesor['creditos_mora'][0]['pagado_hoy']);
+    }
+
+    public function test_daily_collection_exposes_mora_and_counts_its_payment(): void
+    {
+        $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
+        $cliente = $this->cliente('CLI-001', 'Cliente Ana');
+        $credito = $this->credito($advisor, $cliente, 'EnMora', '2026-08-01', 2);
+
+        Pago::create([
+            'num_prog' => $credito->num_prog,
+            'monto' => 50,
+            'fecha' => '2026-08-08',
+            'hora' => '09:00:00',
+            'tipo' => 'Abono',
+        ]);
+
+        $reporte = app(CarteraService::class)->cobrosDelDia('2026-08-08', $advisor->id);
+
+        $this->assertSame(50.0, $reporte['monto_cobrado']);
+        $this->assertCount(1, $reporte['creditos_mora']);
+        $this->assertTrue($reporte['creditos_mora'][0]['pagado_hoy']);
+    }
+
+    public function test_admin_daily_report_only_lists_collection_managers(): void
+    {
+        $gestor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora', 'rol_laboral' => 'Gestor de Cobranza']);
+        $gerente = Asesor::create(['id_asesor' => 'ASE-002', 'nombre_asesor' => 'Beto Gerencia', 'rol_laboral' => 'Gerencia']);
+        $clienteGestor = $this->cliente('CLI-001', 'Cliente Gestor');
+        $clienteGerente = $this->cliente('CLI-002', 'Cliente Gerencia');
+        $creditoGestor = $this->credito($gestor, $clienteGestor, 'Activo', '2026-08-08', 2);
+        $creditoGerente = $this->credito($gerente, $clienteGerente, 'Activo', '2026-08-08', 2);
+
+        Pago::create(['num_prog' => $creditoGestor->num_prog, 'monto' => 100, 'fecha' => '2026-08-08', 'hora' => '09:00:00', 'tipo' => 'Abono']);
+        Pago::create(['num_prog' => $creditoGerente->num_prog, 'monto' => 100, 'fecha' => '2026-08-08', 'hora' => '09:00:00', 'tipo' => 'Abono']);
+
+        $reporte = app(ReportService::class)->reporteDiario('2026-08-08');
+
+        $this->assertSame(100.0, $reporte['total_abonos']);
+        $this->assertSame([$gestor->id], array_column($reporte['por_asesor'], 'id_asesor'));
+    }
+
     public function test_closed_portfolio_excludes_a_credit_replaced_by_an_active_renewal(): void
     {
         $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
@@ -246,10 +325,10 @@ class PagosAtrasadosReportTest extends TestCase
 
     private function createSchema(): void
     {
-        foreach (['pagos', 'refinanciamientos', 'creditos', 'grupos', 'clientes', 'asesores'] as $table) {
+        foreach (['recepciones_asesor', 'pagos', 'refinanciamientos', 'creditos', 'grupos', 'clientes', 'asesores'] as $table) {
             Schema::dropIfExists($table);
         }
-        Schema::create('asesores', function (Blueprint $table) { $table->id(); $table->string('id_asesor')->nullable(); $table->string('nombre_asesor'); $table->timestamps(); });
+        Schema::create('asesores', function (Blueprint $table) { $table->id(); $table->string('id_asesor')->nullable(); $table->string('nombre_asesor'); $table->string('rol_laboral')->nullable(); $table->timestamps(); });
         Schema::create('clientes', function (Blueprint $table) { $table->string('id_cliente')->primary(); $table->string('nombre_completo'); $table->timestamps(); });
         Schema::create('grupos', function (Blueprint $table) { $table->id(); $table->string('nombre_grupo'); $table->timestamps(); });
         Schema::create('creditos', function (Blueprint $table) {
@@ -266,6 +345,10 @@ class PagosAtrasadosReportTest extends TestCase
         });
         Schema::create('pagos', function (Blueprint $table) {
             $table->id(); $table->unsignedBigInteger('num_prog'); $table->decimal('monto', 12, 2); $table->date('fecha'); $table->time('hora')->nullable(); $table->string('tipo'); $table->timestamps();
+        });
+        Schema::create('recepciones_asesor', function (Blueprint $table) {
+            $table->id(); $table->date('fecha'); $table->unsignedBigInteger('id_asesor');
+            $table->decimal('monto_esperado', 12, 2); $table->decimal('monto_recibido', 12, 2); $table->text('notas')->nullable(); $table->timestamps();
         });
     }
 }

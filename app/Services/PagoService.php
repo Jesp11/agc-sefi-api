@@ -5,7 +5,6 @@ namespace App\Services;
 use App\Models\AhorroPersonal;
 use App\Models\AhorroPersonalMovimiento;
 use App\Models\Credito;
-use App\Models\MovimientoCaja;
 use App\Models\Pago;
 use App\Support\RoleHelper;
 use Illuminate\Support\Facades\Auth;
@@ -15,7 +14,6 @@ class PagoService
 {
     public function __construct(
         private MoraCalculationService $moraService,
-        private FlujoCajaService $flujoCajaService
     ) {}
 
     /**
@@ -72,7 +70,6 @@ class PagoService
                 'tipo' => 'Abono',
             ]);
             $pagos[] = $abono;
-            $this->flujoCajaService->registrarDesdePago($abono, $credito);
             $this->registrarAhorroPersonalDesdePago($credito, $abono, $ahorroPersonalMonto);
 
             $multa = null;
@@ -112,7 +109,7 @@ class PagoService
             ->get();
     }
 
-    /** Actualiza un abono histórico y conserva la caja vinculada, si existe. */
+    /** Actualiza un abono sin alterar la recepción de efectivo ya confirmada. */
     public function actualizarAbono(Credito $credito, Pago $pago, array $data): Pago
     {
         return DB::transaction(function () use ($credito, $pago, $data) {
@@ -124,22 +121,10 @@ class PagoService
                 'notas' => $data['notas'] ?? null,
             ]);
 
-            // Una edición no crea registros contables retroactivos por sí sola.
-            // Si ya había ingreso enlazado, sí debe reflejar el cambio.
-            if (MovimientoCaja::where('pago_id', $pago->id)->exists()) {
-                $this->flujoCajaService->sincronizarDesdePago($pago->fresh(), $credito);
-            }
-
             $this->syncCredito($credito);
 
             return $pago->fresh('registradoPor');
         });
-    }
-
-    /** Genera o corrige el ingreso de Flujo de Caja de un abono existente. */
-    public function sincronizarEnCaja(Credito $credito, Pago $pago): ?MovimientoCaja
-    {
-        return $this->flujoCajaService->sincronizarDesdePago($pago, $credito);
     }
 
     private function registrarAhorroPersonalDesdePago(Credito $credito, Pago $pago, float $monto): void

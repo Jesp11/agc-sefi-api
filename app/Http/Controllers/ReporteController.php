@@ -35,6 +35,7 @@ class ReporteController extends Controller
             'fecha' => 'required|date',
             'id_asesor' => 'required|integer|exists:asesores,id',
             'monto_recibido' => 'required|numeric|min:0',
+            'agregar' => 'nullable|boolean',
             'notas' => 'nullable|string|max:500',
         ]);
 
@@ -43,14 +44,15 @@ class ReporteController extends Controller
                 $data['fecha'],
                 (int) $data['id_asesor'],
                 (float) $data['monto_recibido'],
-                $data['notas'] ?? null
+                $data['notas'] ?? null,
+                (bool) ($data['agregar'] ?? false),
             );
         } catch (\InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
         return response()->json([
-            'message' => 'Recepción registrada',
+            'message' => ($data['agregar'] ?? false) ? 'Monto agregado a la recepción' : 'Recepción registrada',
             'data' => $recepcion,
         ]);
     }

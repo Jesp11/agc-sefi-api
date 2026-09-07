@@ -204,6 +204,67 @@ class FlujoCajaService
         });
     }
 
+    /**
+     * Registra en caja únicamente el efectivo que el administrador confirmó
+     * haber recibido del gestor. Un pago capturado todavía no es un ingreso
+     * de la empresa mientras permanezca en poder del gestor.
+     */
+    public function sincronizarCobroRecibido(
+        Pago $pago,
+        Credito $credito,
+        float $montoRecibido,
+        string $fechaRecepcion,
+    ): ?MovimientoCaja {
+        if ($pago->tipo !== 'Abono') {
+            return null;
+        }
+
+        $movimiento = MovimientoCaja::where('pago_id', $pago->id)->first();
+        $montoRecibido = round(max(0, min(abs($montoRecibido), abs((float) $pago->monto))), 2);
+
+        if ($montoRecibido < 0.01) {
+            if (! $movimiento) {
+                return null;
+            }
+
+            return DB::transaction(function () use ($movimiento) {
+                $fechaAnterior = $movimiento->fecha->format('Y-m-d');
+                $movimiento->delete();
+                $this->recalcularSaldosDesde($fechaAnterior);
+
+                return null;
+            });
+        }
+
+        $clienteNombre = $credito->cliente?->nombre_completo
+            ?? $credito->grupo?->nombre_grupo
+            ?? 'Crédito #'.$credito->num_prog;
+        $datos = [
+            'fecha' => $fechaRecepcion,
+            'id_asesor' => $credito->id_asesor,
+            'motivo' => "RECEPCIÓN COBRO CRÉDITO #{$credito->num_prog} — {$clienteNombre}",
+            'tipo' => 'Ingreso',
+            'monto' => $montoRecibido,
+            'categoria' => $credito->estado === 'EnMora' ? 'RecuperacionMora' : 'CobroCartera',
+            'cuenta' => $this->mapMetodoPagoCuenta($pago->metodo_pago),
+            'num_prog' => $credito->num_prog,
+            'pago_id' => $pago->id,
+            'referencia' => "RECEPCION-PAGO-{$pago->id}",
+        ];
+
+        if (! $movimiento) {
+            return $this->registrar($datos);
+        }
+
+        return DB::transaction(function () use ($movimiento, $datos) {
+            $fechaAnterior = $movimiento->fecha->format('Y-m-d');
+            $movimiento->update($datos);
+            $this->recalcularSaldosDesde(min($fechaAnterior, $datos['fecha']));
+
+            return $movimiento->fresh(['asesor', 'credito.cliente', 'credito.grupo']);
+        });
+    }
+
     public function registrarDesdeGasto(GastoOperativo $gasto): MovimientoCaja
     {
         if (MovimientoCaja::where('referencia', "GASTO-{$gasto->id}")->exists()) {

@@ -25,6 +25,9 @@ class UpdateCreditoRequest extends FormRequest
         return [
             'id_cliente' => 'sometimes|nullable|string|exists:clientes,id_cliente',
             'id_grupo' => 'sometimes|nullable|integer|exists:grupos,id',
+            // El responsable de cobranza puede cambiarse sin modificar el
+            // titular del crédito ni el grupo al que pertenece.
+            'id_asesor' => 'sometimes|integer|exists:asesores,id',
             'fecha_otorgacion' => 'sometimes|date',
             'fecha_primer_pago' => 'sometimes|nullable|date',
             'ciclo' => 'sometimes|integer|min:0',

@@ -245,12 +245,15 @@ class CreditoController extends Controller
 
         if (isset($data['id_cliente'])) {
             $cliente = Cliente::findOrFail($data['id_cliente']);
-            $data['id_asesor'] = $cliente->id_asesor;
+            // Al crear un crédito se toma el asesor del cliente. En una
+            // edición, un asesor enviado explícitamente es el responsable
+            // asignado al crédito y no debe ser reemplazado aquí.
+            $data['id_asesor'] = $data['id_asesor'] ?? $cliente->id_asesor;
             $data['tipo_credito'] = 'Individual';
             $data['id_grupo'] = null;
         } elseif (isset($data['id_grupo'])) {
             $grupo = Grupo::findOrFail($data['id_grupo']);
-            $data['id_asesor'] = $grupo->id_asesor;
+            $data['id_asesor'] = $data['id_asesor'] ?? $grupo->id_asesor;
             $data['tipo_credito'] = 'Grupal';
             $data['id_cliente'] = null;
             $data['comision_apertura'] = round($grupo->clientes()->count() * 100, 2);

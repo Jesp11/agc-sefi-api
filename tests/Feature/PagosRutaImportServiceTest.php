@@ -8,7 +8,9 @@ use App\Models\Credito;
 use App\Models\MovimientoCaja;
 use App\Models\Pago;
 use App\Services\FlujoCajaService;
+use App\Services\PagoService;
 use App\Services\PagosRutaImportService;
+use App\Services\ReportService;
 use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -29,7 +31,7 @@ class PagosRutaImportServiceTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_creates_a_payment_and_cash_movement_then_skips_the_same_route_reference(): void
+    public function test_creates_a_payment_without_cash_movement_then_skips_the_same_route_reference(): void
     {
         $credito = $this->credito();
         $row = $this->row($credito);
@@ -46,7 +48,7 @@ class PagosRutaImportServiceTest extends TestCase
             'monto' => 100,
             'referencia_importacion' => $row['referencia_ruta'],
         ]);
-        $this->assertDatabaseHas('movimientos_caja', ['num_prog' => $credito->num_prog, 'tipo' => 'Ingreso', 'monto' => 100]);
+        $this->assertSame(0, MovimientoCaja::count());
         $this->assertSame(100.0, (float) $credito->fresh()->saldo_pendiente);
 
         $again = $service->previsualizar('2026-09-05', [$row], array_keys($row));
@@ -128,6 +130,36 @@ class PagosRutaImportServiceTest extends TestCase
             ->count());
     }
 
+    public function test_cash_income_is_created_only_after_the_administrator_receives_route_money(): void
+    {
+        $credito = $this->credito();
+        $result = app(PagoService::class)->registrar($credito, [
+            'fecha' => '2026-09-05',
+            'hora' => '10:00:00',
+            'monto' => 100,
+            'metodo_pago' => 'Efectivo',
+        ]);
+        $pago = $result['pago'];
+
+        $this->assertSame(0, MovimientoCaja::count());
+
+        $reportes = app(ReportService::class);
+        $reportes->registrarRecepcionAsesor('2026-09-05', $credito->id_asesor, 60);
+
+        $this->assertSame(1, MovimientoCaja::query()
+            ->where('pago_id', $pago->id)
+            ->whereDate('fecha', '2026-09-05')
+            ->where('tipo', 'Ingreso')
+            ->where('monto', 60)
+            ->where('referencia', "RECEPCION-PAGO-{$pago->id}")
+            ->count());
+
+        // "Agregar" suma sólo el efectivo nuevo y ajusta el movimiento sin duplicarlo.
+        $reportes->registrarRecepcionAsesor('2026-09-05', $credito->id_asesor, 40, null, true);
+        $this->assertSame(1, MovimientoCaja::where('pago_id', $pago->id)->count());
+        $this->assertSame(100.0, (float) MovimientoCaja::where('pago_id', $pago->id)->value('monto'));
+    }
+
     private function credito(): Credito
     {
         $asesor = Asesor::create(['nombre_asesor' => 'Gestora']);
@@ -153,7 +185,7 @@ class PagosRutaImportServiceTest extends TestCase
 
     private function createSchema(): void
     {
-        foreach (['movimientos_caja', 'pagos', 'refinanciamientos', 'creditos', 'clientes', 'grupos', 'asesores'] as $table) {
+        foreach (['movimientos_caja', 'recepciones_asesor', 'pagos', 'refinanciamientos', 'creditos', 'clientes', 'grupos', 'asesores'] as $table) {
             Schema::dropIfExists($table);
         }
         Schema::create('asesores', fn (Blueprint $t) => tap($t, fn ($t) => [$t->id(), $t->string('nombre_asesor'), $t->timestamps()]));
@@ -216,6 +248,17 @@ class PagosRutaImportServiceTest extends TestCase
             $t->string('referencia')->nullable();
             $t->unsignedBigInteger('registrado_por')->nullable();
             $t->timestamps();
+        });
+        Schema::create('recepciones_asesor', function (Blueprint $t) {
+            $t->id();
+            $t->date('fecha');
+            $t->unsignedBigInteger('id_asesor');
+            $t->decimal('monto_esperado', 14, 2)->default(0);
+            $t->decimal('monto_recibido', 14, 2)->default(0);
+            $t->text('notas')->nullable();
+            $t->unsignedBigInteger('registrado_por')->nullable();
+            $t->timestamps();
+            $t->unique(['fecha', 'id_asesor']);
         });
     }
 }
