@@ -160,6 +160,36 @@ class PagosRutaImportServiceTest extends TestCase
         $this->assertSame(100.0, (float) MovimientoCaja::where('pago_id', $pago->id)->value('monto'));
     }
 
+    public function test_an_unreceived_payment_can_be_removed_but_a_received_one_cannot(): void
+    {
+        $credito = $this->credito();
+        $pago = Pago::create([
+            'num_prog' => $credito->num_prog,
+            'monto' => 100,
+            'fecha' => '2026-09-05',
+            'hora' => '10:00:00',
+            'tipo' => 'Abono',
+            'metodo_pago' => 'Efectivo',
+        ]);
+
+        app(PagoService::class)->eliminarAbono($credito, $pago);
+        $this->assertDatabaseMissing('pagos', ['id' => $pago->id]);
+        $this->assertSame(200.0, (float) $credito->fresh()->saldo_pendiente);
+
+        $recibido = Pago::create([
+            'num_prog' => $credito->num_prog,
+            'monto' => 100,
+            'fecha' => '2026-09-05',
+            'hora' => '10:30:00',
+            'tipo' => 'Abono',
+            'metodo_pago' => 'Efectivo',
+        ]);
+        app(FlujoCajaService::class)->registrarDesdePago($recibido, $credito);
+
+        $this->expectException(\InvalidArgumentException::class);
+        app(PagoService::class)->eliminarAbono($credito, $recibido);
+    }
+
     private function credito(): Credito
     {
         $asesor = Asesor::create(['nombre_asesor' => 'Gestora']);

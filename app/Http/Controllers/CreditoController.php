@@ -179,6 +179,7 @@ class CreditoController extends Controller
             'mora' => $mora,
             'dias_mora' => $mora['dias_mora'],
             'distribucion_documental' => $this->distribucionService->resumen($credito),
+            'cobranza_individual' => $this->distribucionService->cobranzaPorIntegrante($credito),
         ]));
     }
 

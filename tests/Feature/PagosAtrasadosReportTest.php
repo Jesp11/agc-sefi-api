@@ -278,6 +278,35 @@ class PagosAtrasadosReportTest extends TestCase
         $this->assertSame([$creditoRealCerrado->num_prog], $folios);
     }
 
+    public function test_closed_portfolio_classifies_renewal_right_and_pending_balance(): void
+    {
+        $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
+        $clientePuntual = $this->cliente('CLI-020', 'Cliente Puntual');
+        $clienteMora = $this->cliente('CLI-021', 'Cliente Con Mora');
+        $clienteCerrado = $this->cliente('CLI-022', 'Cliente Con Saldo');
+        $puntual = $this->credito($advisor, $clientePuntual, 'Finalizado', '2026-08-01', 4);
+        $conMora = $this->credito($advisor, $clienteMora, 'Finalizado', '2026-08-01', 4);
+        $conMora->update(['ciclo_inicio_mora' => 2]);
+        $cerradoConSaldo = $this->credito($advisor, $clienteCerrado, 'CerradoSinRenovacion', '2026-08-01', 4);
+
+        $conDerecho = app(CarteraController::class)->cerrados(new Request([
+            'tipo' => 'individual',
+            'seccion' => 'con-derecho-renovacion',
+        ]));
+        $sinRenovacion = app(CarteraController::class)->cerrados(new Request([
+            'tipo' => 'individual',
+            'seccion' => 'sin-derecho-renovacion',
+        ]));
+        $conSaldo = app(CarteraController::class)->cerrados(new Request([
+            'tipo' => 'individual',
+            'seccion' => 'cerrados-con-saldo',
+        ]));
+
+        $this->assertSame([$puntual->num_prog], array_column($conDerecho->getData(true)['data'], 'num_prog'));
+        $this->assertSame([$conMora->num_prog], array_column($sinRenovacion->getData(true)['data'], 'num_prog'));
+        $this->assertSame([$cerradoConSaldo->num_prog], array_column($conSaldo->getData(true)['data'], 'num_prog'));
+    }
+
     private function cliente(string $id, string $nombre): Cliente
     {
         return Cliente::create(['id_cliente' => $id, 'nombre_completo' => $nombre]);
@@ -325,7 +354,7 @@ class PagosAtrasadosReportTest extends TestCase
 
     private function createSchema(): void
     {
-        foreach (['recepciones_asesor', 'pagos', 'refinanciamientos', 'creditos', 'grupos', 'clientes', 'asesores'] as $table) {
+        foreach (['movimientos_caja', 'recepciones_asesor', 'pagos', 'refinanciamientos', 'creditos', 'grupos', 'clientes', 'asesores'] as $table) {
             Schema::dropIfExists($table);
         }
         Schema::create('asesores', function (Blueprint $table) { $table->id(); $table->string('id_asesor')->nullable(); $table->string('nombre_asesor'); $table->string('rol_laboral')->nullable(); $table->timestamps(); });
@@ -333,7 +362,7 @@ class PagosAtrasadosReportTest extends TestCase
         Schema::create('grupos', function (Blueprint $table) { $table->id(); $table->string('nombre_grupo'); $table->timestamps(); });
         Schema::create('creditos', function (Blueprint $table) {
             $table->id('num_prog'); $table->string('id_cliente')->nullable(); $table->unsignedBigInteger('id_grupo')->nullable(); $table->unsignedBigInteger('id_asesor');
-            $table->date('fecha_otorgacion'); $table->date('fecha_primer_pago')->nullable(); $table->integer('ciclo'); $table->decimal('monto_otorgado', 12, 2);
+            $table->date('fecha_otorgacion'); $table->date('fecha_primer_pago')->nullable(); $table->integer('ciclo'); $table->integer('ciclo_inicio_mora')->nullable(); $table->integer('dias_mora_cache')->default(0); $table->decimal('monto_otorgado', 12, 2);
             $table->decimal('interes', 12, 2); $table->decimal('total', 12, 2); $table->decimal('saldo_pendiente', 12, 2)->nullable(); $table->integer('plazos');
             $table->decimal('valor_ficha', 12, 2); $table->string('dias_pago'); $table->string('tipo_credito'); $table->string('estado'); $table->timestamps();
             $table->unsignedBigInteger('credito_padre_id')->nullable();
@@ -345,6 +374,12 @@ class PagosAtrasadosReportTest extends TestCase
         });
         Schema::create('pagos', function (Blueprint $table) {
             $table->id(); $table->unsignedBigInteger('num_prog'); $table->decimal('monto', 12, 2); $table->date('fecha'); $table->time('hora')->nullable(); $table->string('tipo'); $table->timestamps();
+        });
+        Schema::create('movimientos_caja', function (Blueprint $table) {
+            $table->id(); $table->date('fecha'); $table->unsignedBigInteger('id_asesor')->nullable(); $table->text('motivo');
+            $table->string('tipo'); $table->decimal('monto', 14, 2); $table->decimal('saldo_resultante', 14, 2)->nullable();
+            $table->string('categoria')->nullable(); $table->string('cuenta')->nullable(); $table->unsignedBigInteger('num_prog')->nullable();
+            $table->unsignedBigInteger('pago_id')->nullable(); $table->string('referencia')->nullable(); $table->unsignedBigInteger('registrado_por')->nullable(); $table->timestamps();
         });
         Schema::create('recepciones_asesor', function (Blueprint $table) {
             $table->id(); $table->date('fecha'); $table->unsignedBigInteger('id_asesor');

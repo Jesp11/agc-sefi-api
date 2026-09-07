@@ -7,6 +7,7 @@ use App\Models\Pago;
 use App\Http\Requests\StorePagoRequest;
 use App\Services\MoraCalculationService;
 use App\Services\PagoService;
+use App\Services\DistribucionCreditoGrupalService;
 use Illuminate\Http\Request;
 
 class PagoController extends Controller
@@ -24,13 +25,13 @@ class PagoController extends Controller
 
     public function store(StorePagoRequest $request, $numProg)
     {
-        $credito = Credito::with(['cliente', 'grupo', 'asesor'])->findOrFail($numProg);
+        $credito = Credito::with(['cliente', 'grupo', 'asesor', 'distribucionesIntegrantes'])->findOrFail($numProg);
         try {
             $result = $this->pagoService->registrar($credito, $request->validated());
         } catch (\InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
-        $credito = $credito->fresh()->load(['cliente', 'grupo', 'asesor', 'pagos']);
+        $credito = $credito->fresh()->load(['cliente', 'grupo', 'asesor', 'pagos', 'distribucionesIntegrantes']);
 
         $message = $result['multa']
             ? 'Abono y multa registrados exitosamente'
@@ -51,9 +52,11 @@ class PagoController extends Controller
             'ticket' => [
                 'num_prog' => $credito->num_prog,
                 'tipo_credito' => $credito->tipo_credito,
-                'beneficiario' => $credito->tipo_credito === 'Grupal'
-                    ? ($credito->grupo?->nombre_grupo ?? 'Grupo')
-                    : ($credito->cliente?->nombre_completo ?? 'Cliente'),
+                'beneficiario' => $result['pago']->id_cliente_integrante
+                    ? ($credito->distribucionesIntegrantes->firstWhere('id_cliente', $result['pago']->id_cliente_integrante)?->nombre_cliente ?? 'Integrante')
+                    : ($credito->tipo_credito === 'Grupal'
+                        ? ($credito->grupo?->nombre_grupo ?? 'Grupo')
+                        : ($credito->cliente?->nombre_completo ?? 'Cliente')),
                 'asesor' => $credito->asesor?->nombre_asesor,
                 'fecha' => $result['pago']->fecha?->format('Y-m-d') ?? $result['pago']->fecha,
                 'hora' => $result['pago']->hora,
@@ -101,6 +104,33 @@ class PagoController extends Controller
             'message' => 'Abono actualizado exitosamente.',
             'data' => $pago,
         ]);
+    }
+
+    public function destroy($numProg, Pago $pago)
+    {
+        $credito = Credito::with(['cliente', 'grupo', 'asesor'])->findOrFail($numProg);
+        $this->validarPagoDelCredito($credito, $pago);
+
+        try {
+            $this->pagoService->eliminarAbono($credito, $pago);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json([
+            'message' => 'Abono eliminado. El crédito volvió a quedar pendiente en la ruta.',
+        ]);
+    }
+
+    public function distribuirGrupal(Request $request, $numProg, DistribucionCreditoGrupalService $service)
+    {
+        $data = $request->validate(['distribucion' => ['required', 'array'], 'distribucion.*.id_cliente_integrante' => ['required', 'string'], 'distribucion.*.monto' => ['required', 'numeric', 'min:0']]);
+        try {
+            $service->asignarAbonos(Credito::findOrFail($numProg), $data['distribucion']);
+            return response()->json(['message' => 'Abonos grupales distribuidos correctamente.']);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
     }
 
     private function validarPagoDelCredito(Credito $credito, Pago $pago): void

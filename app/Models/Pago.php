@@ -13,6 +13,7 @@ class Pago extends Model
 
     protected $fillable = [
         'num_prog',
+        'id_cliente_integrante',
         'monto',
         'ahorro_personal_monto',
         'fecha',
@@ -35,8 +36,24 @@ class Pago extends Model
         return $this->belongsTo(Credito::class, 'num_prog', 'num_prog');
     }
 
+    /** Integrante al que se aplicó un abono de crédito grupal. */
+    public function integrante()
+    {
+        return $this->belongsTo(Cliente::class, 'id_cliente_integrante', 'id_cliente');
+    }
+
     public function registradoPor()
     {
         return $this->belongsTo(User::class, 'registrado_por');
+    }
+
+    public function movimientoCaja()
+    {
+        return $this->hasOne(MovimientoCaja::class, 'pago_id');
+    }
+
+    public function asignacionesGrupales()
+    {
+        return $this->hasMany(PagoGrupalAsignacion::class, 'pago_id');
     }
 }

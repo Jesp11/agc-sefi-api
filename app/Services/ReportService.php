@@ -54,6 +54,7 @@ class ReportService
             ->pluck('id');
 
         $pagosQuery = Pago::with(['credito.cliente', 'credito.grupo', 'credito.asesor'])
+            ->withExists('movimientoCaja as recibido_en_caja')
             ->whereDate('fecha', $fecha);
 
         $creditosQuery = Credito::with(['cliente', 'grupo', 'asesor'])

@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Models\Cliente;
 use App\Models\Credito;
+use App\Models\Pago;
+use App\Models\PagoGrupalAsignacion;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -138,6 +140,110 @@ class DistribucionCreditoGrupalService
                 && $this->centavos($distribuciones->sum('total')) === $this->centavos($credito->total)
                 && $this->centavos($distribuciones->sum('valor_ficha')) === $this->centavos($credito->valor_ficha),
         ];
+    }
+
+    /**
+     * Desglose de cobranza por integrante. Los abonos previos que se
+     * registraron para todo el grupo permanecen como no asignados: no se
+     * atribuyen arbitrariamente a una persona.
+     */
+    public function cobranzaPorIntegrante(Credito $credito): array
+    {
+        $distribuciones = $credito->relationLoaded('distribucionesIntegrantes')
+            ? $credito->distribucionesIntegrantes
+            : $credito->distribucionesIntegrantes()->get();
+        $pagos = $credito->relationLoaded('pagos')
+            ? $credito->pagos
+            : $credito->pagos()->get();
+        $abonos = $pagos->where('tipo', 'Abono');
+        $abonosPorIntegrante = $abonos
+            ->filter(fn ($pago) => !empty($pago->id_cliente_integrante))
+            ->groupBy('id_cliente_integrante')
+            ->map(fn (Collection $items) => round((float) $items->sum('monto'), 2));
+        $asignaciones = PagoGrupalAsignacion::whereIn('pago_id', $abonos->pluck('id'))->get();
+        foreach ($asignaciones->groupBy('id_cliente_integrante') as $idCliente => $items) {
+            $abonosPorIntegrante->put($idCliente, round((float) ($abonosPorIntegrante->get($idCliente, 0) + $items->sum('monto')), 2));
+        }
+
+        return [
+            'integrantes' => $distribuciones->map(function ($integrante) use ($abonosPorIntegrante) {
+                $abonado = (float) ($abonosPorIntegrante->get($integrante->id_cliente) ?? 0);
+                $total = (float) $integrante->total;
+                $saldo = max(0, round($total - $abonado, 2));
+
+                return [
+                    'id_cliente' => $integrante->id_cliente,
+                    'abonado' => round($abonado, 2),
+                    'saldo_pendiente' => $saldo,
+                    'liquidado' => $saldo <= 0,
+                ];
+            })->values()->all(),
+            'abonos_individuales' => round((float) $abonosPorIntegrante->sum(), 2),
+            'abonos_grupales_sin_asignar' => round(max(0, (float) $abonos
+                ->filter(fn ($pago) => empty($pago->id_cliente_integrante))
+                ->sum('monto') - (float) $asignaciones->sum('monto')), 2),
+        ];
+    }
+
+    public function asignarAbonos(Credito $credito, array $distribucion): void
+    {
+        if ($credito->tipo_credito !== 'Grupal') throw new \InvalidArgumentException('Solo aplica a créditos grupales.');
+        $pagos = Pago::where('num_prog', $credito->num_prog)->where('tipo', 'Abono')->whereNull('id_cliente_integrante')->orderBy('fecha')->orderBy('id')->get();
+        $integrantes = $credito->distribucionesIntegrantes()->get()->keyBy('id_cliente');
+        $totalDisponible = round((float) $pagos->sum('monto'), 2);
+        $totalDistribuido = round((float) collect($distribucion)->sum('monto'), 2);
+        if ($totalDistribuido > $totalDisponible + 0.009) throw new \InvalidArgumentException('La distribución supera el total de abonos sin asignar.');
+        foreach ($distribucion as $fila) if (!$integrantes->has($fila['id_cliente_integrante'])) throw new \InvalidArgumentException('Integrante inválido.');
+
+        DB::transaction(function () use ($pagos, $distribucion) {
+            PagoGrupalAsignacion::whereIn('pago_id', $pagos->pluck('id'))->delete();
+            $restantes = collect($distribucion)->filter(fn ($fila) => (float) $fila['monto'] > 0)->map(fn ($fila) => [
+                'id_cliente_integrante' => $fila['id_cliente_integrante'], 'monto' => round((float) $fila['monto'], 2),
+            ])->values();
+            $registros = [];
+            foreach ($pagos as $pago) {
+                $disponible = (float) $pago->monto;
+                while ($disponible > 0.009 && $restantes->isNotEmpty()) {
+                    $fila = $restantes->first(); $aplicado = min($disponible, $fila['monto']);
+                    $registros[] = ['pago_id' => $pago->id, 'id_cliente_integrante' => $fila['id_cliente_integrante'], 'monto' => $aplicado, 'created_at' => now(), 'updated_at' => now()];
+                    $disponible = round($disponible - $aplicado, 2); $fila['monto'] = round($fila['monto'] - $aplicado, 2);
+                    $fila['monto'] <= 0.009 ? $restantes->shift() : $restantes->put(0, $fila);
+                }
+            }
+            if ($registros) PagoGrupalAsignacion::insert($registros);
+        });
+    }
+
+    /** Distribuye un abono grupal nuevo de forma proporcional a la ficha individual pendiente. */
+    public function asignarPagoAutomaticamente(Credito $credito, Pago $pago): void
+    {
+        if ($credito->tipo_credito !== 'Grupal' || $pago->tipo !== 'Abono' || $pago->id_cliente_integrante) return;
+        $integrantes = $credito->distribucionesIntegrantes()->get();
+        if ($integrantes->isEmpty()) return;
+        $cobranza = $this->cobranzaPorIntegrante($credito);
+        $saldos = collect($cobranza['integrantes'])->keyBy('id_cliente');
+        $pendientes = $integrantes->filter(fn ($i) => (float) ($saldos[$i->id_cliente]['saldo_pendiente'] ?? 0) > 0.009);
+        $disponible = (float) $pago->monto;
+        $registros = [];
+        foreach ($pendientes as $integrante) {
+            if ($disponible <= 0.009) break;
+            $saldo = (float) $saldos[$integrante->id_cliente]['saldo_pendiente'];
+            $aplicado = min($saldo, (float) $integrante->valor_ficha, $disponible);
+            if ($aplicado > 0.009) {
+                $registros[] = ['pago_id' => $pago->id, 'id_cliente_integrante' => $integrante->id_cliente, 'monto' => $aplicado, 'created_at' => now(), 'updated_at' => now()];
+                $disponible = round($disponible - $aplicado, 2);
+            }
+        }
+        // Si fue un pago mayor a una ficha, el remanente continúa liquidando
+        // en orden de saldo, sin exceder el adeudo de ningún integrante.
+        foreach ($pendientes as $integrante) {
+            if ($disponible <= 0.009) break;
+            $yaAsignado = collect($registros)->where('id_cliente_integrante', $integrante->id_cliente)->sum('monto');
+            $faltante = max(0, (float) $saldos[$integrante->id_cliente]['saldo_pendiente'] - $yaAsignado);
+            $aplicado = min($faltante, $disponible);
+            if ($aplicado > 0.009) { $registros[] = ['pago_id' => $pago->id, 'id_cliente_integrante' => $integrante->id_cliente, 'monto' => $aplicado, 'created_at' => now(), 'updated_at' => now()]; $disponible = round($disponible - $aplicado, 2); }
+        }
+        if ($registros) PagoGrupalAsignacion::insert($registros);
     }
 
     private function validarIntegrantes(Credito $credito, array $integrantes): Collection

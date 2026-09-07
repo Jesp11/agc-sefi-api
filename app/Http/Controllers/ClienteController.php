@@ -17,7 +17,7 @@ class ClienteController extends Controller
 
     public function index(Request $request)
     {
-        $clientes = Cliente::with(['creditos.asesor', 'referencias', 'avales', 'asesor', 'grupos'])
+        $clientes = Cliente::with(['creditos.asesor', 'referencias', 'avales', 'asesor', 'grupos.creditos.asesor'])
             ->paginate($request->query('per_page', 10));
         return response()->json($clientes);
     }

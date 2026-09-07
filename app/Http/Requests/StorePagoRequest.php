@@ -15,6 +15,7 @@ class StorePagoRequest extends FormRequest
     {
         return [
             'monto' => 'required|numeric|min:0.01',
+            'id_cliente_integrante' => 'nullable|string|exists:clientes,id_cliente',
             'monto_multa' => 'nullable|numeric|min:0',
             'fecha' => 'required|date',
             'hora' => 'nullable|date_format:H:i:s',

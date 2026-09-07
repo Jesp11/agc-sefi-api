@@ -94,10 +94,11 @@ class CarteraController extends Controller
     public function cerrados(Request $request)
     {
         $tipo = $request->query('tipo');
+        $seccion = $request->query('seccion');
         $idAsesor = $this->scopedAsesorId($request);
 
         $query = Credito::with(['cliente', 'grupo', 'asesor'])
-            ->whereIn('estado', ['CerradoSinRenovacion', 'Finalizado'])
+            ->whereIn('estado', ['CerradoSinRenovacion', 'Finalizado', 'Cancelado'])
             // Un crédito sustituido por una renovación activa no representa
             // un cliente cerrado; su continuidad está en el crédito nuevo.
             ->whereDoesntHave('refinanciamientosComoAnterior.creditoNuevo', function ($q) {
@@ -120,6 +121,36 @@ class CarteraController extends Controller
                         $cq->whereIn('estado', ['Activo', 'EnMora']);
                     });
             });
+
+        // Un crédito liquidado conserva derecho a renovación mientras no
+        // tenga antecedente de mora. Un cierre administrativo liquidado ya no
+        // tiene ese derecho; si aún queda saldo, se muestra por separado.
+        // Sin sección se conserva la respuesta histórica para otros clientes
+        // del endpoint.
+        if ($seccion === 'con-derecho-renovacion') {
+            $query->where('estado', 'Finalizado')
+                ->whereNull('ciclo_inicio_mora')
+                ->where(function ($q) {
+                    $q->whereNull('dias_mora_cache')
+                        ->orWhere('dias_mora_cache', '<=', 0);
+                });
+        } elseif ($seccion === 'sin-derecho-renovacion') {
+            $query->where(function ($q) {
+                $q->where(function ($liquidadoConMora) {
+                    $liquidadoConMora->where('estado', 'Finalizado')
+                        ->where(function ($historial) {
+                            $historial->whereNotNull('ciclo_inicio_mora')
+                                ->orWhere('dias_mora_cache', '>', 0);
+                        });
+                })->orWhere(function ($cerradoLiquidado) {
+                    $cerradoLiquidado->where('estado', 'CerradoSinRenovacion')
+                        ->whereRaw('COALESCE(saldo_pendiente, total) <= 0');
+                });
+            });
+        } elseif ($seccion === 'cerrados-con-saldo') {
+            $query->whereIn('estado', ['CerradoSinRenovacion', 'Cancelado'])
+                ->whereRaw('COALESCE(saldo_pendiente, total) > 0');
+        }
 
         if ($tipo === 'individual') {
             $query->where('tipo_credito', 'Individual');

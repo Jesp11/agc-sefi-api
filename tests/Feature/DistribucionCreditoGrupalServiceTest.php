@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Cliente;
 use App\Models\Credito;
 use App\Models\Grupo;
+use App\Models\Pago;
 use App\Services\DistribucionCreditoGrupalService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -16,7 +17,7 @@ class DistribucionCreditoGrupalServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        foreach (['credito_grupal_distribuciones', 'cliente_grupo', 'creditos', 'clientes', 'grupos'] as $table) {
+        foreach (['pago_grupal_asignaciones', 'pagos', 'credito_grupal_distribuciones', 'cliente_grupo', 'creditos', 'clientes', 'grupos'] as $table) {
             Schema::dropIfExists($table);
         }
         Schema::create('clientes', function (Blueprint $table) {
@@ -67,6 +68,18 @@ class DistribucionCreditoGrupalServiceTest extends TestCase
             $table->string('folio_documental');
             $table->timestamps();
         });
+        Schema::create('pagos', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('num_prog');
+            $table->string('id_cliente_integrante')->nullable();
+            $table->decimal('monto', 12, 2);
+            $table->date('fecha');
+            $table->string('tipo');
+            $table->timestamps();
+        });
+        Schema::create('pago_grupal_asignaciones', function (Blueprint $table) {
+            $table->id(); $table->unsignedBigInteger('pago_id'); $table->string('id_cliente_integrante'); $table->decimal('monto', 12, 2); $table->timestamps();
+        });
     }
 
     public function test_prorrates_documentary_amounts_and_reconciles_every_group_total(): void
@@ -113,5 +126,35 @@ class DistribucionCreditoGrupalServiceTest extends TestCase
         app(DistribucionCreditoGrupalService::class)->guardar($credito, [
             ['id_cliente' => 'C-01', 'capital' => 300],
         ]);
+    }
+
+    public function test_reports_individual_balances_without_assigning_legacy_group_payments(): void
+    {
+        $grupo = Grupo::create(['nombre_grupo' => 'Las Palmas']);
+        Cliente::create(['id_cliente' => 'C-01', 'nombre_completo' => 'Ana']);
+        Cliente::create(['id_cliente' => 'C-02', 'nombre_completo' => 'Beatriz']);
+        $grupo->clientes()->attach(['C-01', 'C-02']);
+        $credito = Credito::create([
+            'id_grupo' => $grupo->id, 'monto_otorgado' => 200, 'interes' => 40,
+            'total' => 240, 'valor_ficha' => 20, 'tipo_credito' => 'Grupal',
+        ]);
+        app(DistribucionCreditoGrupalService::class)->guardar($credito, [
+            ['id_cliente' => 'C-01', 'capital' => 100],
+            ['id_cliente' => 'C-02', 'capital' => 100],
+        ]);
+        Pago::create(['num_prog' => $credito->num_prog, 'id_cliente_integrante' => 'C-01', 'monto' => 120, 'fecha' => '2026-09-07', 'tipo' => 'Abono']);
+        Pago::create(['num_prog' => $credito->num_prog, 'monto' => 20, 'fecha' => '2026-09-07', 'tipo' => 'Abono']);
+
+        $cobranza = app(DistribucionCreditoGrupalService::class)->cobranzaPorIntegrante(
+            $credito->fresh()->load(['distribucionesIntegrantes', 'pagos'])
+        );
+
+        $ana = collect($cobranza['integrantes'])->firstWhere('id_cliente', 'C-01');
+        $beatriz = collect($cobranza['integrantes'])->firstWhere('id_cliente', 'C-02');
+        $this->assertEquals(120.0, $ana['abonado']);
+        $this->assertEquals(0.0, $ana['saldo_pendiente']);
+        $this->assertTrue($ana['liquidado']);
+        $this->assertEquals(120.0, $beatriz['saldo_pendiente']);
+        $this->assertEquals(20.0, $cobranza['abonos_grupales_sin_asignar']);
     }
 }
