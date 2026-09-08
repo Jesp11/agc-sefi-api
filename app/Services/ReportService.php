@@ -195,10 +195,10 @@ class ReportService
                 // Si hubo abonos mayores a la ruta del día, se conserva el
                 // monto realmente cobrado porque también debe entregarse.
                 $aRecibirBruto = max($cobrado, $progDelDia);
-                // La comisión se descuenta del efectivo de la renovación. La
-                // operación la realiza gerencia, así que no es un faltante ni
-                // un abono que el gestor responsable deba entregar.
-                $aRecibir = max(0, round($aRecibirBruto - $comisionesRenovacion, 2));
+                // La comisión de renovación la retiene gerencia antes de
+                // entregar el efectivo neto. Se conserva como referencia en
+                // el corte, pero no reduce la entrega del gestor.
+                $aRecibir = round($aRecibirBruto, 2);
 
                 $porAsesor[] = [
                     'id_asesor' => (int) $aid,
