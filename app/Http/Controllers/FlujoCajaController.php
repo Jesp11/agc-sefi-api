@@ -34,7 +34,11 @@ class FlujoCajaController extends Controller
     {
         $data = $this->validatedMovimiento($request);
 
-        $mov = $this->service->registrar($data);
+        try {
+            $mov = $this->service->registrar($data);
+        } catch (\InvalidArgumentException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
 
         return response()->json([
             'message' => 'Movimiento registrado',

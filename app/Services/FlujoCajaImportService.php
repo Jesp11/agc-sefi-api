@@ -32,7 +32,7 @@ class FlujoCajaImportService
         $recalcFrom = sprintf('%04d-%02d-01', $anio, $mes);
         $saldoInicialRegistrado = false;
 
-        DB::transaction(function () use ($rows, $reemplazar, $referenceMonthPrefix, $recalcFrom, &$stats, &$saldoInicialRegistrado) {
+        DB::transaction(function () use ($rows, $reemplazar, $referenceMonthPrefix, $recalcFrom, $anio, $mes, &$stats, &$saldoInicialRegistrado) {
             if ($reemplazar) {
                 $query = MovimientoCaja::query()
                     ->where('referencia', 'like', $referenceMonthPrefix . '%');
@@ -78,6 +78,22 @@ class FlujoCajaImportService
                         }
 
                         $saldoInicialRegistrado = true;
+                        // El saldo inicial siempre representa la apertura del
+                        // mes importado, aunque la fila de Excel tenga otra
+                        // fecha. Si ya existe uno manual, se conserva como la
+                        // base autorizada y no se reemplaza con la importación.
+                        $fecha = $recalcFrom;
+                        if (MovimientoCaja::query()
+                            ->whereYear('fecha', $anio)
+                            ->whereMonth('fecha', $mes)
+                            ->where('categoria', 'SaldoInicial')
+                            ->exists()) {
+                            $stats['warnings'][] = [
+                                'fila' => $rowNumber,
+                                'mensaje' => 'Se omitió el SALDO MES importado porque ya existe un saldo inicial para este mes.',
+                            ];
+                            continue;
+                        }
                     }
 
                     $referencia = sprintf(

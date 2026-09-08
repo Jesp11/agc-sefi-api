@@ -8,6 +8,7 @@ use App\Models\Credito;
 use App\Models\GastoOperativo;
 use App\Models\MovimientoCaja;
 use App\Models\Pago;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
 class FlujoCajaService
@@ -56,13 +57,16 @@ class FlujoCajaService
         return DB::transaction(function () use ($data) {
             $tipo = $data['tipo'];
             $motivo = $data['motivo'];
+            $categoria = $data['categoria'] ?? $this->inferirCategoria($motivo, $tipo);
+            $this->validarSaldoInicial($data['fecha'], $categoria);
+
             $mov = MovimientoCaja::create([
                 'fecha' => $data['fecha'],
                 'id_asesor' => $data['id_asesor'] ?? null,
                 'motivo' => $motivo,
                 'tipo' => $tipo,
                 'monto' => abs((float) $data['monto']),
-                'categoria' => $data['categoria'] ?? $this->inferirCategoria($motivo, $tipo),
+                'categoria' => $categoria,
                 'cuenta' => $data['cuenta'] ?? null,
                 'num_prog' => $data['num_prog'] ?? null,
                 'pago_id' => $data['pago_id'] ?? null,
@@ -93,13 +97,15 @@ class FlujoCajaService
             $fechaAnterior = $movimiento->fecha->format('Y-m-d');
             $motivo = $data['motivo'];
             $tipo = $data['tipo'];
+            $categoria = $data['categoria'] ?? $this->inferirCategoria($motivo, $tipo);
+            $this->validarSaldoInicial($data['fecha'], $categoria, $movimiento->id);
             $movimiento->update([
                 'fecha' => $data['fecha'],
                 'id_asesor' => $data['id_asesor'] ?? null,
                 'motivo' => $motivo,
                 'tipo' => $tipo,
                 'monto' => abs((float) $data['monto']),
-                'categoria' => $data['categoria'] ?? $this->inferirCategoria($motivo, $tipo),
+                'categoria' => $categoria,
                 'cuenta' => $data['cuenta'] ?? null,
                 'num_prog' => $data['num_prog'] ?? $movimiento->num_prog,
             ]);
@@ -403,6 +409,34 @@ class FlujoCajaService
         }
 
         return $saldo - (float) $mov->monto;
+    }
+
+    /**
+     * El saldo inicial es la base del mes, no un movimiento ordinario. Sólo
+     * puede existir uno, fechado el día 1, para evitar reinicios posteriores
+     * del saldo acumulado.
+     */
+    private function validarSaldoInicial(string $fecha, ?string $categoria, ?int $movimientoIdExcluido = null): void
+    {
+        if ($categoria !== 'SaldoInicial') {
+            return;
+        }
+
+        $fechaSaldoInicial = Carbon::parse($fecha);
+        if (! $fechaSaldoInicial->isSameDay($fechaSaldoInicial->copy()->startOfMonth())) {
+            throw new \InvalidArgumentException('El saldo inicial debe registrarse el primer día del mes.');
+        }
+
+        $existe = MovimientoCaja::query()
+            ->whereYear('fecha', $fechaSaldoInicial->year)
+            ->whereMonth('fecha', $fechaSaldoInicial->month)
+            ->where('categoria', 'SaldoInicial')
+            ->when($movimientoIdExcluido, fn ($query) => $query->where('id', '!=', $movimientoIdExcluido))
+            ->exists();
+
+        if ($existe) {
+            throw new \InvalidArgumentException('Ya existe un saldo inicial para este mes. Edita ese registro para corregir la base.');
+        }
     }
 
     public function listar(?int $mes = null, ?int $anio = null, ?string $tipo = null)

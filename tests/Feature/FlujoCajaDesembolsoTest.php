@@ -197,6 +197,70 @@ class FlujoCajaDesembolsoTest extends TestCase
         ]);
     }
 
+    public function test_initial_balance_is_the_month_base_and_later_movements_do_not_replace_it(): void
+    {
+        $flujoCaja = app(FlujoCajaService::class);
+
+        $saldoInicial = $flujoCaja->registrar([
+            'fecha' => '2026-09-01',
+            'motivo' => 'Saldo inicial de septiembre',
+            'tipo' => 'Ingreso',
+            'monto' => 10000,
+            'categoria' => 'SaldoInicial',
+        ]);
+        $ingreso = $flujoCaja->registrar([
+            'fecha' => '2026-09-02',
+            'motivo' => 'Cobro del día',
+            'tipo' => 'Ingreso',
+            'monto' => 500,
+        ]);
+        $egreso = $flujoCaja->registrar([
+            'fecha' => '2026-09-03',
+            'motivo' => 'Gasto del día',
+            'tipo' => 'Egreso',
+            'monto' => 200,
+        ]);
+
+        $this->assertSame(10000.0, (float) $saldoInicial->saldo_resultante);
+        $this->assertSame(10500.0, (float) $ingreso->saldo_resultante);
+        $this->assertSame(10300.0, (float) $egreso->saldo_resultante);
+    }
+
+    public function test_initial_balance_must_be_unique_and_registered_on_the_first_day_of_the_month(): void
+    {
+        $flujoCaja = app(FlujoCajaService::class);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $flujoCaja->registrar([
+            'fecha' => '2026-09-02',
+            'motivo' => 'Saldo inicial fuera de fecha',
+            'tipo' => 'Ingreso',
+            'monto' => 10000,
+            'categoria' => 'SaldoInicial',
+        ]);
+    }
+
+    public function test_cannot_register_a_second_initial_balance_in_the_same_month(): void
+    {
+        $flujoCaja = app(FlujoCajaService::class);
+        $flujoCaja->registrar([
+            'fecha' => '2026-09-01',
+            'motivo' => 'Saldo inicial de septiembre',
+            'tipo' => 'Ingreso',
+            'monto' => 10000,
+            'categoria' => 'SaldoInicial',
+        ]);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $flujoCaja->registrar([
+            'fecha' => '2026-09-01',
+            'motivo' => 'Segundo saldo inicial',
+            'tipo' => 'Ingreso',
+            'monto' => 5000,
+            'categoria' => 'SaldoInicial',
+        ]);
+    }
+
     public function test_deleting_an_automatic_movement_is_not_allowed(): void
     {
         $movimiento = MovimientoCaja::create([
