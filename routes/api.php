@@ -32,6 +32,7 @@ use App\Http\Controllers\BusquedaGlobalController;
 use App\Http\Controllers\ExcelImportController;
 use App\Http\Controllers\RenovacionHistoricaImportController;
 use App\Http\Controllers\PagosRutaImportController;
+use App\Http\Controllers\ConfirmacionMovimientoController;
 
 Route::group([
     'middleware' => 'api',
@@ -148,6 +149,14 @@ Route::middleware('auth:api')->group(function () {
     Route::get('flujo-caja', [FlujoCajaController::class, 'index']);
     Route::get('flujo-caja/resumen', [FlujoCajaController::class, 'resumen']);
     Route::get('flujo-caja/cuentas', [FlujoCajaController::class, 'cuentas']);
+    Route::get('confirmaciones-movimientos', [ConfirmacionMovimientoController::class, 'index'])->middleware('role:admin');
+    Route::get('confirmaciones-movimientos/gestor', [ConfirmacionMovimientoController::class, 'pendientesGestor']);
+    Route::post('confirmaciones-movimientos/{confirmacion}/confirmar', [ConfirmacionMovimientoController::class, 'confirmar'])->middleware('role:admin');
+    Route::post('confirmaciones-movimientos/{confirmacion}/confirmar-desembolso', [ConfirmacionMovimientoController::class, 'confirmarDesembolsoGestor']);
+    Route::post('confirmaciones-movimientos/{confirmacion}/cancelar-desembolso', [ConfirmacionMovimientoController::class, 'cancelarDesembolsoGestor']);
+    Route::post('confirmaciones-movimientos/{confirmacion}/confirmar-reintegro', [ConfirmacionMovimientoController::class, 'confirmarReintegro'])->middleware('role:admin');
+    Route::post('confirmaciones-movimientos/{confirmacion}/reprogramar-desembolso', [ConfirmacionMovimientoController::class, 'reprogramarDesembolso'])->middleware('role:admin');
+    Route::post('confirmaciones-movimientos/{confirmacion}/cancelar', [ConfirmacionMovimientoController::class, 'cancelar'])->middleware('role:admin');
     Route::post('flujo-caja/import', [FlujoCajaController::class, 'import'])
         ->middleware('role:admin');
     Route::post('flujo-caja', [FlujoCajaController::class, 'store']);

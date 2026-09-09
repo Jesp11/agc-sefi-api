@@ -25,6 +25,10 @@ class PagoService
      */
     public function registrar(Credito $credito, array $data): array
     {
+        if ($credito->estado === 'PendienteDesembolso') {
+            throw new \InvalidArgumentException('Este crédito está pendiente de desembolso y aún no puede recibir pagos.');
+        }
+
         return DB::transaction(function () use ($credito, $data) {
             $hora = $data['hora'] ?? now()->format('H:i:s');
             $base = [

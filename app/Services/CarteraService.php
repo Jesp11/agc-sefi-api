@@ -105,7 +105,7 @@ class CarteraService
             return ($b['dias_atraso'] ?? 0) <=> ($a['dias_atraso'] ?? 0);
         });
 
-        $pagosDelDia = Pago::query()
+        $pagosDelDia = Pago::with(['credito.cliente', 'credito.grupo', 'credito.asesor'])
             ->whereDate('fecha', $fechaRef->toDateString())
             ->whereHas('credito', function ($q) use ($idAsesor) {
                 $q->whereIn('estado', ['Activo', 'Finalizado', 'EnMora']);
@@ -133,6 +133,9 @@ class CarteraService
             'monto_cobrado' => round($montoCobrado, 2),
             'num_abonos' => $pagosDelDia->where('tipo', 'Abono')->count(),
             'monto_multas' => round($montoMultas, 2),
+            // La vista diaria del gestor usa estos datos para mostrar sus
+            // abonos capturados y permitir reimprimir cada comprobante.
+            'pagos' => $pagosDelDia->where('tipo', 'Abono')->values(),
             'cobros' => $cobros,
             'creditos_mora' => $creditosMora,
         ];
@@ -189,11 +192,6 @@ class CarteraService
         $tieneAtrasadas = $oldest['atrasada'];
         $diaPago = $this->normalizarDiaPago($credito->dias_pago);
         $esDiaPago = $diaPago === $diaSemana;
-        $pagadoHoy = $credito->pagos
-            ->where('tipo', 'Abono')
-            ->contains(fn ($pago) => $pago->fecha
-                && Carbon::parse($pago->fecha)->isSameDay($fechaRef));
-
         // Del día: clientes cuyo día asignado es hoy.
         // Atrasados: clientes de otros días que deben cuotas pasadas.
         if (!$tieneAtrasadas && !$esDiaPago) {
@@ -201,6 +199,16 @@ class CarteraService
         }
 
         $categoria = $esDiaPago ? 'del_dia' : 'atrasado';
+        $clasificacionAbonosHoy = $this->clasificarAbonosDelDia($credito, $fechaRef);
+        $montoAbonadoAtrasado = round((float) collect($clasificacionAbonosHoy)->sum('atrasado'), 2);
+        $montoAbonadoDelDia = round((float) collect($clasificacionAbonosHoy)->sum('del_dia'), 2);
+        // Si el crédito está programado hoy y además arrastra una cuota, los
+        // dos importes corresponden a cobranza exigible; los anticipados se
+        // excluyen para no inflar lo abonado de ruta o atraso.
+        $abonosHoy = $categoria === 'atrasado'
+            ? $montoAbonadoAtrasado
+            : round($montoAbonadoAtrasado + $montoAbonadoDelDia, 2);
+        $pagadoHoy = $abonosHoy > 0.009;
         // La ruta del día siempre cobra la ficha completa. Los abonos previos
         // pueden servir para el saldo del crédito, pero no deben descontarse
         // automáticamente de la cuota que se muestra al gestor.
@@ -231,11 +239,79 @@ class CarteraService
             // La ruta conserva el crédito después de un abono para que el
             // gestor tenga confirmación visual de lo que ya cobró.
             'pagado_hoy' => $pagadoHoy,
+            // Conserva la suma de todos los abonos capturados en la fecha;
+            // un cliente atrasado puede cubrir más de una cuota en una visita.
+            'monto_abonado_hoy' => round($abonosHoy, 2),
+            'monto_abonado_atrasado_hoy' => $montoAbonadoAtrasado,
+            'monto_abonado_del_dia_hoy' => $montoAbonadoDelDia,
             'cliente' => $credito->cliente?->toArray() ?? [],
             'grupo' => $credito->grupo?->toArray(),
             'asesor' => $credito->asesor?->toArray(),
             'pendientes' => $pendientesParaCobro,
         ];
+    }
+
+    /**
+     * Distribuye los abonos de una fecha entre cuotas vencidas, del día y
+     * futuras. Así un segundo o tercer pago no se etiqueta como atrasado una
+     * vez que las cuotas vencidas ya quedaron cubiertas.
+     *
+     * @return array<int, array{atrasado: float, del_dia: float, adelantado: float}>
+     */
+    public function clasificarAbonosDelDia(Credito $credito, Carbon|string $fecha, $pagosCredito = null): array
+    {
+        $fechaRef = $fecha instanceof Carbon ? $fecha->copy()->startOfDay() : Carbon::parse($fecha)->startOfDay();
+        $pagos = collect($pagosCredito ?? $credito->pagos)
+            ->where('tipo', 'Abono');
+        $cuotas = collect($this->moraService->generateSchedule($credito))
+            ->map(fn (array $cuota) => [
+                'fecha' => Carbon::parse($cuota['fecha'])->startOfDay(),
+                'saldo' => round((float) $cuota['pago'], 2),
+            ])->all();
+        $abonoPrevio = (float) $pagos
+            ->filter(fn (Pago $pago) => $pago->fecha && Carbon::parse($pago->fecha)->startOfDay()->lt($fechaRef))
+            ->sum('monto');
+
+        foreach ($cuotas as &$cuota) {
+            if ($abonoPrevio <= 0.009) {
+                break;
+            }
+            $aplicado = min($abonoPrevio, $cuota['saldo']);
+            $cuota['saldo'] = round($cuota['saldo'] - $aplicado, 2);
+            $abonoPrevio = round($abonoPrevio - $aplicado, 2);
+        }
+        unset($cuota);
+
+        $resultado = [];
+        foreach ($pagos
+            ->filter(fn (Pago $pago) => $pago->fecha && Carbon::parse($pago->fecha)->isSameDay($fechaRef))
+            ->sortBy([['hora', 'asc'], ['id', 'asc']]) as $pago) {
+            $detalle = ['atrasado' => 0.0, 'del_dia' => 0.0, 'adelantado' => 0.0];
+            $restante = (float) $pago->monto;
+
+            foreach ($cuotas as &$cuota) {
+                if ($restante <= 0.009 || $cuota['saldo'] <= 0.009) {
+                    continue;
+                }
+                $aplicado = min($restante, $cuota['saldo']);
+                $tipo = $cuota['fecha']->lt($fechaRef)
+                    ? 'atrasado'
+                    : ($cuota['fecha']->isSameDay($fechaRef) ? 'del_dia' : 'adelantado');
+                $detalle[$tipo] = round($detalle[$tipo] + $aplicado, 2);
+                $cuota['saldo'] = round($cuota['saldo'] - $aplicado, 2);
+                $restante = round($restante - $aplicado, 2);
+            }
+            unset($cuota);
+
+            // Un importe que excede el calendario también permanece a favor
+            // del cliente y se reporta como pago adelantado.
+            if ($restante > 0.009) {
+                $detalle['adelantado'] = round($detalle['adelantado'] + $restante, 2);
+            }
+            $resultado[(int) $pago->id] = $detalle;
+        }
+
+        return $resultado;
     }
 
     private function normalizarDiaPago(?string $diasPago): string

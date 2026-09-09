@@ -20,7 +20,7 @@ class DocumentoClienteController extends Controller
         $cliente = Cliente::findOrFail($idCliente);
 
         $request->validate([
-            'tipo' => 'required|in:INE,INEReverso,ComprobanteDomicilio,Foto,SolicitudPrestamo,Otro',
+            'tipo' => 'required|in:INE,INEReverso,ComprobanteDomicilio,Foto,FotoUbicacion,SolicitudPrestamo,Otro',
             'archivo' => 'required|file|max:10240',
         ]);
 

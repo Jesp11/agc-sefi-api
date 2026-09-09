@@ -84,7 +84,9 @@ class RefinanciamientoService
                 'valor_ficha' => $valorFicha,
                 'dias_pago' => $data['dias_pago'] ?? $creditoAnterior->dias_pago,
                 'tipo_credito' => $creditoAnterior->tipo_credito,
-                'estado' => 'Activo',
+                // La renovación no entra a cobranza hasta que el gestor confirme
+                // que entregó el efectivo al cliente.
+                'estado' => 'PendienteDesembolso',
                 'comision_apertura' => $comisionApertura,
                 'credito_padre_id' => $creditoAnterior->num_prog,
                 'tasa_asignada' => $data['tasa_asignada'] ?? $creditoAnterior->tasa_asignada,

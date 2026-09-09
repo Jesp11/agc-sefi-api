@@ -12,7 +12,7 @@ return new class extends Migration
             return;
         }
 
-        DB::statement("ALTER TABLE documentos_cliente MODIFY COLUMN tipo ENUM('INE', 'INEReverso', 'ComprobanteDomicilio', 'Foto', 'SolicitudPrestamo', 'Otro') NOT NULL DEFAULT 'Otro'");
+        DB::statement("ALTER TABLE documentos_cliente MODIFY COLUMN tipo ENUM('INE', 'INEReverso', 'ComprobanteDomicilio', 'Foto', 'FotoUbicacion', 'SolicitudPrestamo', 'Otro') NOT NULL DEFAULT 'Otro'");
     }
 
     public function down(): void

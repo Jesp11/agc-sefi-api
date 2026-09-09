@@ -108,7 +108,7 @@ class NominaController extends Controller
 
                 foreach ($pagosNomina as $pago) {
                     $nombre = $asesores[$pago['asesor_id']] ?? "Empleado #{$pago['asesor_id']}";
-                    $flujoCajaService->registrar([
+                    $flujoCajaService->solicitarConfirmacionEgreso([
                         'fecha' => $data['fecha_fin'],
                         'id_asesor' => $pago['asesor_id'],
                         'motivo' => "NÓMINA — {$referenciaMovimiento} — {$nombre}",

@@ -119,7 +119,7 @@ class PagosAtrasadosReportTest extends TestCase
         $atrasado = $this->credito($advisor, $cliente, 'Activo', '2026-08-01', 4);
         $atrasado->update(['dias_pago' => 'LUNES']);
 
-        Pago::create([
+        $pago = Pago::create([
             'num_prog' => $credito->num_prog,
             'monto' => 100,
             'fecha' => '2026-08-08',
@@ -127,12 +127,32 @@ class PagosAtrasadosReportTest extends TestCase
             'tipo' => 'Abono',
         ]);
 
-        $cobro = collect(app(CarteraService::class)->cobrosDelDia('2026-08-08')['cobros'])
+        $reporte = app(CarteraService::class)->cobrosDelDia('2026-08-08');
+        $cobro = collect($reporte['cobros'])
             ->firstWhere('num_prog', $credito->num_prog);
 
         $this->assertNotNull($cobro);
         $this->assertTrue($cobro['pagado_hoy']);
-        $this->assertSame(100.0, app(CarteraService::class)->cobrosDelDia('2026-08-08')['monto_a_cobrar']);
+        $this->assertSame(100.0, $reporte['monto_a_cobrar']);
+        $this->assertSame([$pago->id], collect($reporte['pagos'])->pluck('id')->all());
+    }
+
+    public function test_daily_collection_accumulates_all_payments_for_an_overdue_client(): void
+    {
+        $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
+        $cliente = $this->cliente('CLI-001', 'Cliente atrasado');
+        $credito = $this->credito($advisor, $cliente, 'Activo', '2026-08-01', 4);
+        $credito->update(['dias_pago' => 'LUNES']);
+
+        Pago::create(['num_prog' => $credito->num_prog, 'monto' => 40, 'fecha' => '2026-08-08', 'hora' => '09:00:00', 'tipo' => 'Abono']);
+        Pago::create(['num_prog' => $credito->num_prog, 'monto' => 60, 'fecha' => '2026-08-08', 'hora' => '10:00:00', 'tipo' => 'Abono']);
+
+        $cobro = collect(app(CarteraService::class)->cobrosDelDia('2026-08-08')['cobros'])
+            ->firstWhere('num_prog', $credito->num_prog);
+
+        $this->assertSame('atrasado', $cobro['categoria']);
+        $this->assertSame(100.0, $cobro['monto_abonado_hoy']);
+        $this->assertTrue($cobro['pagado_hoy']);
     }
 
     public function test_daily_route_keeps_full_installment_despite_prior_credit_balance(): void
@@ -173,6 +193,81 @@ class PagosAtrasadosReportTest extends TestCase
         $this->assertSame(75.0, $asesor['total_cobrado']);
         $this->assertCount(1, $asesor['creditos_mora']);
         $this->assertTrue($asesor['creditos_mora'][0]['pagado_hoy']);
+    }
+
+    public function test_daily_report_keeps_a_client_credit_balance_out_of_another_clients_pending_installment(): void
+    {
+        $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
+        $clienteQuePaga = $this->cliente('CLI-001', 'Cliente con saldo a favor');
+        $clientePendiente = $this->cliente('CLI-002', 'Cliente pendiente');
+        $creditoQuePaga = $this->credito($advisor, $clienteQuePaga, 'Activo', '2026-09-05', 2);
+        $creditoPendiente = $this->credito($advisor, $clientePendiente, 'Activo', '2026-09-05', 2);
+        $creditoQuePaga->update(['total' => 1180, 'saldo_pendiente' => 1180, 'valor_ficha' => 590]);
+        $creditoPendiente->update(['total' => 1200, 'saldo_pendiente' => 1200, 'valor_ficha' => 600]);
+
+        $pago = Pago::create([
+            'num_prog' => $creditoQuePaga->num_prog,
+            'monto' => 600,
+            'fecha' => '2026-09-05',
+            'hora' => '09:00:00',
+            'tipo' => 'Abono',
+        ]);
+
+        $reporte = app(ReportService::class)->reporteDiario('2026-09-05');
+        $asesor = collect($reporte['por_asesor'])->firstWhere('id_asesor', $advisor->id);
+        $pagoReportado = collect($reporte['pagos'])->firstWhere('id', $pago->id);
+
+        $this->assertSame(10.0, $reporte['saldo_favor_clientes']);
+        $this->assertSame(600.0, $reporte['total_pendiente_cobro']);
+        $this->assertSame(10.0, $asesor['saldo_favor_clientes']);
+        $this->assertSame(600.0, $asesor['monto_pendiente_cobro']);
+        $this->assertSame(10.0, (float) $pagoReportado->saldo_favor_cliente);
+    }
+
+    public function test_daily_report_lists_an_early_payment_once_and_omits_its_future_installment(): void
+    {
+        $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
+        $cliente = $this->cliente('CLI-001', 'Cliente anticipado');
+        $credito = $this->credito($advisor, $cliente, 'Activo', '2026-09-12', 2);
+        $pago = Pago::create([
+            'num_prog' => $credito->num_prog,
+            'monto' => 100,
+            'fecha' => '2026-09-05',
+            'hora' => '09:00:00',
+            'tipo' => 'Abono',
+        ]);
+
+        $reportePago = app(ReportService::class)->reporteDiario('2026-09-05');
+        $asesorPago = collect($reportePago['por_asesor'])->firstWhere('id_asesor', $advisor->id);
+        $reporteVencimiento = app(ReportService::class)->reporteDiario('2026-09-12');
+        $asesorVencimiento = collect($reporteVencimiento['por_asesor'])->firstWhere('id_asesor', $advisor->id);
+
+        $this->assertSame([$pago->id], collect($reportePago['pagos_anticipados'])->pluck('id')->all());
+        $this->assertSame([$pago->id], collect($asesorPago['pagos_anticipados'])->pluck('id')->all());
+        $this->assertNull($asesorVencimiento);
+        $this->assertSame([], $reporteVencimiento['cobros_programados']->all());
+    }
+
+    public function test_daily_report_moves_the_payment_after_settling_arrears_to_advance_payments(): void
+    {
+        $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
+        $cliente = $this->cliente('CLI-001', 'Cliente con atrasos');
+        $credito = $this->credito($advisor, $cliente, 'Activo', '2026-08-01', 4);
+
+        $primero = Pago::create(['num_prog' => $credito->num_prog, 'monto' => 100, 'fecha' => '2026-08-14', 'hora' => '09:00:00', 'tipo' => 'Abono']);
+        $segundo = Pago::create(['num_prog' => $credito->num_prog, 'monto' => 100, 'fecha' => '2026-08-14', 'hora' => '10:00:00', 'tipo' => 'Abono']);
+        $adelantado = Pago::create(['num_prog' => $credito->num_prog, 'monto' => 100, 'fecha' => '2026-08-14', 'hora' => '11:00:00', 'tipo' => 'Abono']);
+
+        $reporte = app(ReportService::class)->reporteDiario('2026-08-14');
+        $asesor = collect($reporte['por_asesor'])->firstWhere('id_asesor', $advisor->id);
+        $cobroAtrasado = $reporte['cobros_programados']->firstWhere('num_prog', $credito->num_prog);
+
+        $this->assertSame([$adelantado->id], collect($reporte['pagos_anticipados'])->pluck('id')->all());
+        $this->assertSame([$adelantado->id], collect($asesor['pagos_anticipados'])->pluck('id')->all());
+        $this->assertSame(200.0, $cobroAtrasado['monto_abonado_atrasado_hoy']);
+        $this->assertSame(100.0, (float) collect($reporte['pagos'])->firstWhere('id', $adelantado->id)->monto_adelantado_hoy);
+        $this->assertSame(100.0, (float) collect($reporte['pagos'])->firstWhere('id', $primero->id)->monto_atrasado_hoy);
+        $this->assertSame(100.0, (float) collect($reporte['pagos'])->firstWhere('id', $segundo->id)->monto_atrasado_hoy);
     }
 
     public function test_daily_collection_exposes_mora_and_counts_its_payment(): void

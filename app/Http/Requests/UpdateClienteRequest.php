@@ -32,6 +32,7 @@ class UpdateClienteRequest extends FormRequest
             'telefono' => 'sometimes|string|max:20',
             'direccion' => 'sometimes|string',
             'entre_calles' => 'sometimes|string|max:255',
+            'tipo_comprobante_domicilio' => 'sometimes|nullable|string|max:100',
             'ocupacion' => 'sometimes|string|max:255',
             'direccion_trabajo' => 'sometimes|string',
             'telefono_trabajo' => 'sometimes|string|max:20',

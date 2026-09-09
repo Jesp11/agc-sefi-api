@@ -76,6 +76,7 @@ class RefinanciamientoComisionTest extends TestCase
         ]);
 
         $this->assertSame(100.0, (float) $nuevo->comision_apertura);
+        $this->assertSame('PendienteDesembolso', $nuevo->estado);
         $this->assertSame($creditoAnterior->num_prog, $nuevo->credito_padre_id);
         $this->assertSame('Finalizado', $creditoAnterior->fresh()->estado);
         $this->assertSame(0.0, (float) $creditoAnterior->fresh()->saldo_pendiente);

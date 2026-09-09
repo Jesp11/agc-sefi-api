@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\AhorroPersonal;
 use App\Models\AhorroSocio;
 use App\Models\Credito;
+use App\Models\ConfirmacionMovimiento;
 use App\Models\GastoOperativo;
 use App\Models\MovimientoCaja;
 use App\Models\Pago;
@@ -77,6 +78,180 @@ class FlujoCajaService
             $this->recalcularSaldosDesde($mov->fecha);
 
             return $mov->fresh(['asesor', 'credito.cliente', 'credito.grupo']);
+        });
+    }
+
+    /** Guarda un egreso automático para revisión; aún no afecta la caja. */
+    public function solicitarConfirmacionEgreso(array $data): ConfirmacionMovimiento
+    {
+        if (($data['tipo'] ?? 'Egreso') !== 'Egreso') {
+            throw new \InvalidArgumentException('Sólo los egresos requieren confirmación.');
+        }
+
+        $referencia = $data['referencia'] ?? null;
+        return DB::transaction(function () use ($data, $referencia) {
+            $pendiente = $referencia
+                ? ConfirmacionMovimiento::where('referencia', $referencia)->lockForUpdate()->first()
+                : null;
+            $campos = [
+                'fecha' => $data['fecha'], 'id_asesor' => $data['id_asesor'] ?? null,
+                'motivo' => $data['motivo'], 'monto' => abs((float) $data['monto']),
+                'categoria' => $data['categoria'] ?? $this->inferirCategoria($data['motivo'], 'Egreso'),
+                'cuenta' => $data['cuenta'] ?? null, 'num_prog' => $data['num_prog'] ?? null,
+                'referencia' => $referencia, 'solicitado_por' => auth()->id(),
+            ];
+            if ($pendiente && $pendiente->estado === 'Pendiente') {
+                $pendiente->update($campos);
+                return $pendiente->fresh();
+            }
+            if ($pendiente) {
+                return $pendiente;
+            }
+            return ConfirmacionMovimiento::create($campos);
+        });
+    }
+
+    /** Confirma un egreso pendiente y lo registra finalmente en Flujo de Caja. */
+    public function confirmarEgresoPendiente(ConfirmacionMovimiento $confirmacion): ConfirmacionMovimiento
+    {
+        return DB::transaction(function () use ($confirmacion) {
+            $confirmacion = ConfirmacionMovimiento::lockForUpdate()->findOrFail($confirmacion->id);
+            if ($confirmacion->estado !== 'Pendiente') {
+                throw new \InvalidArgumentException('Este movimiento ya fue atendido.');
+            }
+            $movimiento = $this->registrar([
+                'fecha' => $confirmacion->fecha->toDateString(), 'id_asesor' => $confirmacion->id_asesor,
+                'motivo' => $confirmacion->motivo, 'tipo' => 'Egreso', 'monto' => $confirmacion->monto,
+                'categoria' => $confirmacion->categoria, 'cuenta' => $confirmacion->cuenta,
+                'num_prog' => $confirmacion->num_prog, 'referencia' => $confirmacion->referencia,
+            ]);
+            $esRenovacion = mb_strtolower((string) $confirmacion->categoria) === 'renovacion';
+            $confirmacion->update([
+                'estado' => $esRenovacion ? 'EntregadoGestor' : 'Confirmado',
+                'movimiento_caja_id' => $movimiento->id,
+                'confirmado_por' => auth()->id(), 'confirmado_at' => now(),
+            ]);
+            return $confirmacion->fresh(['asesor', 'credito', 'movimientoCaja']);
+        });
+    }
+
+    public function confirmarDesembolsoRenovacionPorGestor(ConfirmacionMovimiento $confirmacion): ConfirmacionMovimiento
+    {
+        return DB::transaction(function () use ($confirmacion) {
+            $confirmacion = ConfirmacionMovimiento::lockForUpdate()->findOrFail($confirmacion->id);
+            if ($confirmacion->estado !== 'EntregadoGestor' || mb_strtolower((string) $confirmacion->categoria) !== 'renovacion') {
+                throw new \InvalidArgumentException('El desembolso no está pendiente de confirmación por gestor.');
+            }
+            $confirmacion->update([
+                'estado' => 'Confirmado',
+                'entregado_gestor_por' => auth()->id(),
+                'entregado_gestor_at' => now(),
+            ]);
+            Credito::where('num_prog', $confirmacion->num_prog)
+                ->where('estado', 'PendienteDesembolso')
+                ->update(['estado' => 'Activo']);
+
+            return $confirmacion->fresh(['asesor', 'credito', 'movimientoCaja']);
+        });
+    }
+
+    /** El gestor informa que no pudo entregar una renovación ya recibida. */
+    public function cancelarDesembolsoRenovacionPorGestor(ConfirmacionMovimiento $confirmacion): ConfirmacionMovimiento
+    {
+        return DB::transaction(function () use ($confirmacion) {
+            $confirmacion = ConfirmacionMovimiento::lockForUpdate()->findOrFail($confirmacion->id);
+            if ($confirmacion->estado !== 'EntregadoGestor' || mb_strtolower((string) $confirmacion->categoria) !== 'renovacion') {
+                throw new \InvalidArgumentException('El desembolso no está disponible para cancelación por gestor.');
+            }
+            $confirmacion->update([
+                'estado' => 'PendienteReintegro',
+                'cancelado_gestor_por' => auth()->id(),
+                'cancelado_gestor_at' => now(),
+            ]);
+            // Renovaciones creadas antes de este flujo podían estar activas
+            // aun sin haberse entregado. Al cancelar la entrega se bloquean
+            // para cobro hasta que se realice un nuevo desembolso.
+            Credito::where('num_prog', $confirmacion->num_prog)
+                ->where('estado', 'Activo')
+                ->update(['estado' => 'PendienteDesembolso']);
+
+            return $confirmacion->fresh(['asesor', 'credito', 'movimientoCaja']);
+        });
+    }
+
+    /** Contabilidad confirma el regreso del efectivo y registra el ingreso compensatorio. */
+    public function confirmarReintegroRenovacion(ConfirmacionMovimiento $confirmacion): ConfirmacionMovimiento
+    {
+        return DB::transaction(function () use ($confirmacion) {
+            $confirmacion = ConfirmacionMovimiento::lockForUpdate()->findOrFail($confirmacion->id);
+            if ($confirmacion->estado !== 'PendienteReintegro' || mb_strtolower((string) $confirmacion->categoria) !== 'renovacion') {
+                throw new \InvalidArgumentException('El reintegro no está pendiente de confirmación.');
+            }
+
+            $movimiento = $this->registrar([
+                'fecha' => now()->toDateString(),
+                'id_asesor' => $confirmacion->id_asesor,
+                'motivo' => "REINTEGRO DE RENOVACIÓN CANCELADA #{$confirmacion->num_prog}",
+                'tipo' => 'Ingreso',
+                'monto' => $confirmacion->monto,
+                'categoria' => 'ReintegroRenovacion',
+                'cuenta' => 'Efectivo',
+                'num_prog' => $confirmacion->num_prog,
+                'referencia' => "REINTEGRO-RENOVACION-{$confirmacion->id}",
+            ]);
+            $confirmacion->update([
+                'estado' => 'Reintegrado',
+                'movimiento_reintegro_id' => $movimiento->id,
+                'reintegrado_por' => auth()->id(),
+                'reintegrado_at' => now(),
+            ]);
+
+            return $confirmacion->fresh(['asesor', 'credito', 'movimientoCaja', 'movimientoReintegro']);
+        });
+    }
+
+    /** Crea una nueva solicitud de salida tras haber reintegrado una renovación no entregada. */
+    public function reprogramarDesembolsoRenovacion(ConfirmacionMovimiento $confirmacion, ?string $fecha = null): ConfirmacionMovimiento
+    {
+        return DB::transaction(function () use ($confirmacion, $fecha) {
+            $confirmacion = ConfirmacionMovimiento::lockForUpdate()->findOrFail($confirmacion->id);
+            if ($confirmacion->estado !== 'Reintegrado' || mb_strtolower((string) $confirmacion->categoria) !== 'renovacion') {
+                throw new \InvalidArgumentException('Sólo se puede reprogramar una renovación con efectivo reintegrado.');
+            }
+
+            $credito = Credito::find($confirmacion->num_prog);
+            if (! $credito) {
+                throw new \InvalidArgumentException('No se encontró el crédito de la renovación.');
+            }
+            // Compatibilidad con renovaciones canceladas antes de que existiera
+            // el estado PendienteDesembolso.
+            if ($credito->estado === 'Activo' && ! Pago::where('num_prog', $credito->num_prog)->exists()) {
+                $credito->update(['estado' => 'PendienteDesembolso']);
+            }
+            if ($credito->fresh()->estado !== 'PendienteDesembolso') {
+                throw new \InvalidArgumentException('El crédito ya no está pendiente de desembolso.');
+            }
+            if (ConfirmacionMovimiento::where('num_prog', $confirmacion->num_prog)
+                ->whereIn('estado', ['Pendiente', 'EntregadoGestor'])
+                ->exists()) {
+                throw new \InvalidArgumentException('Ya existe un desembolso en proceso para este crédito.');
+            }
+
+            $intento = ConfirmacionMovimiento::where('num_prog', $confirmacion->num_prog)->count() + 1;
+            $nuevoIntento = ConfirmacionMovimiento::create([
+                'fecha' => $fecha ?? now()->toDateString(),
+                'id_asesor' => $confirmacion->id_asesor,
+                'motivo' => "REPROGRAMACIÓN — {$confirmacion->motivo}",
+                'monto' => $confirmacion->monto,
+                'categoria' => 'Renovacion',
+                'cuenta' => 'Efectivo',
+                'num_prog' => $confirmacion->num_prog,
+                'referencia' => "DESEMBOLSO-{$confirmacion->num_prog}-REINTENTO-{$intento}",
+                'solicitado_por' => auth()->id(),
+            ]);
+            $confirmacion->update(['estado' => 'Reprogramado']);
+
+            return $nuevoIntento->fresh(['asesor', 'credito']);
         });
     }
 
@@ -271,13 +446,13 @@ class FlujoCajaService
         });
     }
 
-    public function registrarDesdeGasto(GastoOperativo $gasto): MovimientoCaja
+    public function registrarDesdeGasto(GastoOperativo $gasto): ?MovimientoCaja
     {
         if (MovimientoCaja::where('referencia', "GASTO-{$gasto->id}")->exists()) {
             return MovimientoCaja::where('referencia', "GASTO-{$gasto->id}")->first();
         }
 
-        return $this->registrar([
+        $this->solicitarConfirmacionEgreso([
             'fecha' => $gasto->fecha->format('Y-m-d'),
             'id_asesor' => $gasto->registradoPor?->id_asesor,
             'motivo' => $gasto->concepto,
@@ -287,6 +462,7 @@ class FlujoCajaService
             'cuenta' => $gasto->cuenta,
             'referencia' => "GASTO-{$gasto->id}",
         ]);
+        return null;
     }
 
     /**
@@ -315,7 +491,7 @@ class FlujoCajaService
                 : $credito->fecha_otorgacion->format('Y-m-d'))
             : now()->toDateString();
 
-        return $this->registrar([
+        $this->solicitarConfirmacionEgreso([
             'fecha' => $fecha,
             'id_asesor' => $credito->id_asesor,
             'motivo' => $motivo ?? "DESEMBOLSO CRÉDITO #{$credito->num_prog} — {$beneficiario}",
@@ -326,6 +502,7 @@ class FlujoCajaService
             'num_prog' => $credito->num_prog,
             'referencia' => $referencia,
         ]);
+        return null;
     }
 
     /**
@@ -439,13 +616,15 @@ class FlujoCajaService
         }
     }
 
-    public function listar(?int $mes = null, ?int $anio = null, ?string $tipo = null)
+    public function listar(?int $mes = null, ?int $anio = null, ?string $tipo = null, ?string $fecha = null)
     {
         $query = MovimientoCaja::with(['asesor', 'registradoPor', 'credito.cliente', 'credito.grupo'])
             ->orderByDesc('fecha')
             ->orderByDesc('id');
 
-        if ($anio) {
+        if ($fecha) {
+            $query->whereDate('fecha', $fecha);
+        } elseif ($anio) {
             $query->whereYear('fecha', $anio);
         }
         if ($mes) {
@@ -458,13 +637,13 @@ class FlujoCajaService
         return $query;
     }
 
-    public function resumen(?int $mes = null, ?int $anio = null): array
+    public function resumen(?int $mes = null, ?int $anio = null, ?string $fecha = null): array
     {
         $anio = $anio ?? (int) now()->year;
         $mes = $mes ?? (int) now()->month;
 
-        $movimientosMes = MovimientoCaja::whereYear('fecha', $anio)
-            ->whereMonth('fecha', $mes)
+        $movimientosMes = MovimientoCaja::query()
+            ->when($fecha, fn ($query) => $query->whereDate('fecha', $fecha), fn ($query) => $query->whereYear('fecha', $anio)->whereMonth('fecha', $mes))
             ->get();
 
         $saldoInicialRow = $movimientosMes->where('categoria', 'SaldoInicial')->first();

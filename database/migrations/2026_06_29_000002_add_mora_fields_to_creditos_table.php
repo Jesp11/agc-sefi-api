@@ -34,7 +34,7 @@ return new class extends Migration
         });
 
         if (Schema::getConnection()->getDriverName() === 'mysql') {
-            DB::statement("ALTER TABLE creditos MODIFY COLUMN estado ENUM('Activo','Finalizado','Cancelado','EnMora','CerradoSinRenovacion') NOT NULL DEFAULT 'Activo'");
+            DB::statement("ALTER TABLE creditos MODIFY COLUMN estado ENUM('Activo','Finalizado','Cancelado','EnMora','CerradoSinRenovacion','PendienteDesembolso') NOT NULL DEFAULT 'Activo'");
         }
 
         if (Schema::hasColumn('creditos', 'credito_padre_id')) {

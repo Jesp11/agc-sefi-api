@@ -22,6 +22,7 @@ class StoreClienteRequest extends FormRequest
             'telefono' => 'required|string|max:20',
             'direccion' => 'required|string',
             'entre_calles' => 'required|string|max:255',
+            'tipo_comprobante_domicilio' => 'nullable|string|max:100',
             'ocupacion' => 'required|string|max:255',
             'direccion_trabajo' => 'required|string',
             'telefono_trabajo' => 'required|string|max:20',

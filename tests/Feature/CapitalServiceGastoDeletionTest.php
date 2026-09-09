@@ -16,7 +16,7 @@ class CapitalServiceGastoDeletionTest extends TestCase
     {
         parent::setUp();
 
-        foreach (['movimientos_caja', 'movimientos_capital', 'gastos_operativos'] as $table) {
+        foreach (['confirmaciones_movimientos', 'movimientos_caja', 'movimientos_capital', 'gastos_operativos'] as $table) {
             Schema::dropIfExists($table);
         }
 
@@ -48,6 +48,10 @@ class CapitalServiceGastoDeletionTest extends TestCase
             $table->string('categoria')->nullable();
             $table->string('referencia')->nullable();
             $table->timestamps();
+        });
+        Schema::create('confirmaciones_movimientos', function (Blueprint $table) {
+            $table->id(); $table->date('fecha'); $table->text('motivo'); $table->decimal('monto', 14, 2);
+            $table->string('referencia')->nullable(); $table->string('estado')->default('Pendiente'); $table->timestamps();
         });
     }
 

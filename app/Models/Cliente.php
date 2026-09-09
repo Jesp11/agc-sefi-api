@@ -23,6 +23,7 @@ class Cliente extends Model
         'telefono',
         'direccion',
         'entre_calles',
+        'tipo_comprobante_domicilio',
         'ocupacion',
         'direccion_trabajo',
         'telefono_trabajo',

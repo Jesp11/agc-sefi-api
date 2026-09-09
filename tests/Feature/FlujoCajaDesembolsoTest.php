@@ -7,6 +7,7 @@ use App\Models\Credito;
 use App\Models\GastoOperativo;
 use App\Models\MovimientoCaja;
 use App\Models\MovimientoCapital;
+use App\Models\ConfirmacionMovimiento;
 use App\Services\FlujoCajaService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -18,7 +19,7 @@ class FlujoCajaDesembolsoTest extends TestCase
     {
         parent::setUp();
 
-        foreach (['movimientos_caja', 'movimientos_capital', 'gastos_operativos', 'creditos', 'clientes', 'asesores'] as $table) {
+        foreach (['confirmaciones_movimientos', 'movimientos_caja', 'movimientos_capital', 'gastos_operativos', 'creditos', 'clientes', 'asesores'] as $table) {
             Schema::dropIfExists($table);
         }
 
@@ -42,6 +43,7 @@ class FlujoCajaDesembolsoTest extends TestCase
             $table->date('fecha_otorgacion');
             $table->decimal('monto_otorgado', 12, 2);
             $table->decimal('comision_apertura', 12, 2)->nullable();
+            $table->string('estado')->default('Activo');
             $table->timestamps();
         });
 
@@ -60,6 +62,17 @@ class FlujoCajaDesembolsoTest extends TestCase
             $table->string('referencia')->nullable();
             $table->unsignedBigInteger('registrado_por')->nullable();
             $table->timestamps();
+        });
+
+        Schema::create('confirmaciones_movimientos', function (Blueprint $table) {
+            $table->id(); $table->date('fecha'); $table->unsignedBigInteger('id_asesor')->nullable(); $table->text('motivo');
+            $table->decimal('monto', 14, 2); $table->string('categoria')->nullable(); $table->string('cuenta')->nullable();
+            $table->unsignedBigInteger('num_prog')->nullable(); $table->string('referencia')->nullable()->unique();
+            $table->string('estado')->default('Pendiente'); $table->unsignedBigInteger('movimiento_caja_id')->nullable(); $table->unsignedBigInteger('movimiento_reintegro_id')->nullable();
+            $table->unsignedBigInteger('solicitado_por')->nullable(); $table->unsignedBigInteger('confirmado_por')->nullable(); $table->timestamp('confirmado_at')->nullable();
+            $table->unsignedBigInteger('entregado_gestor_por')->nullable(); $table->timestamp('entregado_gestor_at')->nullable();
+            $table->unsignedBigInteger('cancelado_gestor_por')->nullable(); $table->timestamp('cancelado_gestor_at')->nullable();
+            $table->unsignedBigInteger('reintegrado_por')->nullable(); $table->timestamp('reintegrado_at')->nullable(); $table->timestamps();
         });
 
         Schema::create('gastos_operativos', function (Blueprint $table) {
@@ -98,12 +111,92 @@ class FlujoCajaDesembolsoTest extends TestCase
         $flujoCaja->sincronizarDesembolso($credito, 1400);
 
         $referencia = "DESEMBOLSO-{$credito->num_prog}";
-        $this->assertSame(1, MovimientoCaja::where('referencia', $referencia)->count());
-        $this->assertDatabaseHas('movimientos_caja', [
+        $this->assertSame(0, MovimientoCaja::where('referencia', $referencia)->count());
+        $this->assertDatabaseHas('confirmaciones_movimientos', [
             'referencia' => $referencia,
-            'tipo' => 'Egreso',
             'monto' => 1400.00,
+            'estado' => 'Pendiente',
         ]);
+    }
+
+    public function test_confirming_a_pending_expense_is_when_it_affects_cash(): void
+    {
+        $flujoCaja = app(FlujoCajaService::class);
+        $pendiente = $flujoCaja->solicitarConfirmacionEgreso([
+            'fecha' => '2026-09-05', 'motivo' => 'Desembolso por confirmar', 'tipo' => 'Egreso',
+            'monto' => 900, 'categoria' => 'Desembolso', 'cuenta' => 'Efectivo', 'referencia' => 'PRUEBA-CONF-1',
+        ]);
+
+        $this->assertSame(0, MovimientoCaja::count());
+        $flujoCaja->confirmarEgresoPendiente($pendiente);
+
+        $this->assertDatabaseHas('confirmaciones_movimientos', ['id' => $pendiente->id, 'estado' => 'Confirmado']);
+        $this->assertDatabaseHas('movimientos_caja', ['referencia' => 'PRUEBA-CONF-1', 'tipo' => 'Egreso', 'monto' => 900.00]);
+    }
+
+    public function test_renewal_requires_manager_and_field_agent_confirmations_without_duplicate_cash_expense(): void
+    {
+        $credito = Credito::create([
+            'id_asesor' => 1, 'fecha_otorgacion' => '2026-09-05', 'monto_otorgado' => 3028,
+            'estado' => 'PendienteDesembolso',
+        ]);
+        $flujoCaja = app(FlujoCajaService::class);
+        $pendiente = $flujoCaja->solicitarConfirmacionEgreso([
+            'fecha' => '2026-09-05', 'id_asesor' => 1, 'motivo' => 'RENOVACIÓN A 14 SEMANAS — Virginia',
+            'tipo' => 'Egreso', 'monto' => 3028, 'categoria' => 'Renovacion', 'cuenta' => 'Efectivo', 'num_prog' => $credito->num_prog,
+            'referencia' => 'DESEMBOLSO-REN-1',
+        ]);
+
+        $entregadoAlGestor = $flujoCaja->confirmarEgresoPendiente($pendiente);
+
+        $this->assertSame('EntregadoGestor', $entregadoAlGestor->estado);
+        $this->assertSame(1, MovimientoCaja::where('referencia', 'DESEMBOLSO-REN-1')->count());
+
+        $confirmado = $flujoCaja->confirmarDesembolsoRenovacionPorGestor($entregadoAlGestor);
+
+        $this->assertSame('Confirmado', $confirmado->estado);
+        $this->assertNotNull($confirmado->entregado_gestor_at);
+        $this->assertSame(1, MovimientoCaja::where('referencia', 'DESEMBOLSO-REN-1')->count());
+        $this->assertSame('Activo', $credito->fresh()->estado);
+    }
+
+    public function test_cancelled_renewal_requires_cash_reintegration_confirmation(): void
+    {
+        $credito = Credito::create([
+            'id_asesor' => 1, 'fecha_otorgacion' => '2026-09-05', 'monto_otorgado' => 1500,
+            'estado' => 'Activo',
+        ]);
+        $flujoCaja = app(FlujoCajaService::class);
+        $pendiente = $flujoCaja->solicitarConfirmacionEgreso([
+            'fecha' => '2026-09-05', 'id_asesor' => 1, 'motivo' => 'RENOVACIÓN NO ENTREGADA',
+            'tipo' => 'Egreso', 'monto' => 1500, 'categoria' => 'Renovacion', 'cuenta' => 'Efectivo',
+            'referencia' => 'DESEMBOLSO-REN-CANCELADO', 'num_prog' => $credito->num_prog,
+        ]);
+
+        $entregadoAlGestor = $flujoCaja->confirmarEgresoPendiente($pendiente);
+        $pendienteReintegro = $flujoCaja->cancelarDesembolsoRenovacionPorGestor($entregadoAlGestor);
+
+        $this->assertSame('PendienteReintegro', $pendienteReintegro->estado);
+        $this->assertNotNull($pendienteReintegro->cancelado_gestor_at);
+        $this->assertSame('PendienteDesembolso', $credito->fresh()->estado);
+        $this->assertSame(1, MovimientoCaja::where('referencia', 'DESEMBOLSO-REN-CANCELADO')->count());
+
+        $reintegrado = $flujoCaja->confirmarReintegroRenovacion($pendienteReintegro);
+
+        $this->assertSame('Reintegrado', $reintegrado->estado);
+        $this->assertNotNull($reintegrado->reintegrado_at);
+        $this->assertDatabaseHas('movimientos_caja', [
+            'referencia' => "REINTEGRO-RENOVACION-{$pendiente->id}",
+            'tipo' => 'Ingreso',
+            'monto' => 1500.00,
+            'categoria' => 'ReintegroRenovacion',
+        ]);
+
+        $reprogramado = $flujoCaja->reprogramarDesembolsoRenovacion($reintegrado, '2026-09-10');
+        $this->assertSame('Pendiente', $reprogramado->estado);
+        $this->assertSame('2026-09-10', $reprogramado->fecha->toDateString());
+        $this->assertSame('Reprogramado', $reintegrado->fresh()->estado);
+        $this->assertSame('PendienteDesembolso', $credito->fresh()->estado);
     }
 
     public function test_syncing_a_restructured_delivery_replaces_5028_with_3028(): void
@@ -128,8 +221,8 @@ class FlujoCajaDesembolsoTest extends TestCase
         );
 
         $referencia = "DESEMBOLSO-{$credito->num_prog}";
-        $this->assertSame(1, MovimientoCaja::where('referencia', $referencia)->count());
-        $this->assertDatabaseHas('movimientos_caja', [
+        $this->assertSame(0, MovimientoCaja::where('referencia', $referencia)->count());
+        $this->assertDatabaseHas('confirmaciones_movimientos', [
             'referencia' => $referencia,
             'monto' => 3028.00,
             'motivo' => 'RENOVACIÓN A 14 SEMANAS — Renovación',
@@ -153,7 +246,7 @@ class FlujoCajaDesembolsoTest extends TestCase
         $credito->update(['comision_apertura' => 300]); // tres integrantes × $100
         $flujoCaja->sincronizarDesembolso($credito, 9700);
 
-        $this->assertDatabaseHas('movimientos_caja', [
+        $this->assertDatabaseHas('confirmaciones_movimientos', [
             'referencia' => "DESEMBOLSO-{$credito->num_prog}",
             'monto' => 9700.00,
         ]);

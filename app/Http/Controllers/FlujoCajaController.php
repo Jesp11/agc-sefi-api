@@ -17,7 +17,7 @@ class FlujoCajaController extends Controller
         $anio = $request->query('anio') ? (int) $request->query('anio') : null;
         $tipo = $request->query('tipo');
 
-        $query = $this->service->listar($mes, $anio, $tipo);
+        $query = $this->service->listar($mes, $anio, $tipo, $request->query('fecha'));
 
         return response()->json($query->paginate($request->query('per_page', 20)));
     }
@@ -27,7 +27,7 @@ class FlujoCajaController extends Controller
         $mes = $request->query('mes') ? (int) $request->query('mes') : null;
         $anio = $request->query('anio') ? (int) $request->query('anio') : null;
 
-        return response()->json($this->service->resumen($mes, $anio));
+        return response()->json($this->service->resumen($mes, $anio, $request->query('fecha')));
     }
 
     public function store(Request $request)

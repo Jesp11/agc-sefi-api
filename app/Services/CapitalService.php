@@ -8,6 +8,7 @@ use App\Models\Credito;
 use App\Models\GastoOperativo;
 use App\Models\MovimientoCapital;
 use App\Models\MovimientoCaja;
+use App\Models\ConfirmacionMovimiento;
 use App\Services\FlujoCajaService;
 use Illuminate\Support\Facades\DB;
 
@@ -67,7 +68,7 @@ class CapitalService
             ]);
 
             // Registrar en Flujo de Caja como Egreso en categoría Rendimiento
-            app(FlujoCajaService::class)->registrar([
+            app(FlujoCajaService::class)->solicitarConfirmacionEgreso([
                 'fecha' => $fecha,
                 'motivo' => $concepto,
                 'tipo' => 'Egreso',
@@ -159,6 +160,7 @@ class CapitalService
             $referencia = "GASTO-{$gasto->id}";
 
             MovimientoCaja::where('referencia', $referencia)->delete();
+            ConfirmacionMovimiento::where('referencia', $referencia)->delete();
             MovimientoCapital::where('referencia', $referencia)->delete();
             $gasto->delete();
 
