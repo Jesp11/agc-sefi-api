@@ -7,6 +7,7 @@ use App\Models\AhorroPersonalMovimiento;
 use App\Models\Credito;
 use App\Models\MovimientoCaja;
 use App\Models\Pago;
+use App\Models\RecepcionAsesor;
 use App\Support\RoleHelper;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -189,22 +190,35 @@ class PagoService
         });
     }
 
-    /**
-     * Anula un abono capturado por error antes de que sea recibido en caja.
-     * Después de la recepción, el pago forma parte de un ingreso contable y
-     * debe conservarse para que el corte y la caja no queden desincronizados.
-     */
+    /** Elimina el abono y su ingreso, ajustando crédito, caja y corte juntos. */
     public function eliminarAbono(Credito $credito, Pago $pago): void
     {
         if ($pago->tipo !== 'Abono') {
             throw new \InvalidArgumentException('Solo los abonos pueden eliminarse desde el corte diario.');
         }
 
-        if (MovimientoCaja::where('pago_id', $pago->id)->exists()) {
-            throw new \InvalidArgumentException('No se puede eliminar este abono porque ya fue recibido y registrado en caja.');
-        }
-
         DB::transaction(function () use ($credito, $pago) {
+            $pago = Pago::whereKey($pago->id)->lockForUpdate()->firstOrFail();
+            $movimientos = MovimientoCaja::where('pago_id', $pago->id)->lockForUpdate()->get();
+            foreach ($movimientos->groupBy(fn ($mov) => $mov->fecha->format('Y-m-d').'|'.$mov->id_asesor) as $grupo) {
+                $movimiento = $grupo->first();
+                $recepcion = RecepcionAsesor::whereDate('fecha', $movimiento->fecha)
+                    ->where('id_asesor', $movimiento->id_asesor)
+                    ->lockForUpdate()->first();
+                if ($recepcion) {
+                    // Conservar la hora del corte permite detectar abonos posteriores.
+                    $recepcion->timestamps = false;
+                    $recepcion->update([
+                        'monto_recibido' => max(0, round((float) $recepcion->monto_recibido - (float) $grupo->sum('monto'), 2)),
+                        'monto_esperado' => max(0, round((float) $recepcion->monto_esperado - (float) $pago->monto, 2)),
+                    ]);
+                }
+            }
+            MovimientoCaja::where('pago_id', $pago->id)->delete();
+            if ($movimientos->isNotEmpty()) {
+                app(FlujoCajaService::class)->recalcularSaldosDesde($movimientos->min('fecha')->format('Y-m-d'));
+            }
+
             $ahorroPersonalMonto = abs((float) $pago->ahorro_personal_monto);
             if ($ahorroPersonalMonto > 0 && $credito->id_asesor) {
                 $ahorro = AhorroPersonal::where('asesor_id', $credito->id_asesor)

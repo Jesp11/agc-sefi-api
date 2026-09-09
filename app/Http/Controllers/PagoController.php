@@ -118,7 +118,7 @@ class PagoController extends Controller
         }
 
         return response()->json([
-            'message' => 'Abono eliminado. El crédito volvió a quedar pendiente en la ruta.',
+            'message' => 'Abono eliminado junto con su ingreso de caja asociado, si existía. Saldos actualizados.',
         ]);
     }
 

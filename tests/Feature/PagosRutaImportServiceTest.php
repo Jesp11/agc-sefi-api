@@ -160,7 +160,7 @@ class PagosRutaImportServiceTest extends TestCase
         $this->assertSame(100.0, (float) MovimientoCaja::where('pago_id', $pago->id)->value('monto'));
     }
 
-    public function test_an_unreceived_payment_can_be_removed_but_a_received_one_cannot(): void
+    public function test_unreceived_and_received_payments_can_be_removed(): void
     {
         $credito = $this->credito();
         $pago = Pago::create([
@@ -186,8 +186,45 @@ class PagosRutaImportServiceTest extends TestCase
         ]);
         app(FlujoCajaService::class)->registrarDesdePago($recibido, $credito);
 
-        $this->expectException(\InvalidArgumentException::class);
         app(PagoService::class)->eliminarAbono($credito, $recibido);
+        $this->assertDatabaseMissing('pagos', ['id' => $recibido->id]);
+        $this->assertDatabaseMissing('movimientos_caja', ['pago_id' => $recibido->id]);
+        $this->assertSame(200.0, (float) $credito->fresh()->saldo_pendiente);
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('receivedAmounts')]
+    public function test_deleting_a_received_payment_adjusts_the_cut_and_preserves_other_income(float $recibido): void
+    {
+        $credito = $this->credito();
+        $service = app(PagoService::class);
+        $primero = $service->registrar($credito, [
+            'fecha' => '2026-09-05', 'hora' => '09:00:00', 'monto' => 100,
+        ])['pago'];
+        $erroneo = $service->registrar($credito, [
+            'fecha' => '2026-09-05', 'hora' => '10:00:00', 'monto' => 100,
+        ])['pago'];
+        $recepcion = app(ReportService::class)->registrarRecepcionAsesor('2026-09-05', $credito->id_asesor, $recibido);
+        $posterior = app(FlujoCajaService::class)->registrar([
+            'fecha' => '2026-09-06', 'motivo' => 'Otro ingreso', 'tipo' => 'Ingreso', 'monto' => 25,
+        ]);
+        $horaCorte = $recepcion->updated_at->toDateTimeString();
+        Carbon::setTestNow('2026-09-05 12:00:00');
+
+        $service->eliminarAbono($credito, $erroneo);
+
+        $this->assertDatabaseMissing('pagos', ['id' => $erroneo->id]);
+        $this->assertDatabaseMissing('movimientos_caja', ['pago_id' => $erroneo->id]);
+        $this->assertSame(100.0, (float) MovimientoCaja::where('pago_id', $primero->id)->value('monto'));
+        $this->assertSame(100.0, (float) $credito->fresh()->saldo_pendiente);
+        $this->assertSame(100.0, (float) $recepcion->fresh()->monto_recibido);
+        $this->assertSame(100.0, (float) $recepcion->fresh()->monto_esperado);
+        $this->assertSame($horaCorte, $recepcion->fresh()->updated_at->toDateTimeString());
+        $this->assertSame(125.0, (float) $posterior->fresh()->saldo_resultante);
+    }
+
+    public static function receivedAmounts(): array
+    {
+        return ['partial' => [160.0], 'full' => [200.0]];
     }
 
     private function credito(): Credito
