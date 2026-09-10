@@ -113,9 +113,33 @@ class CarteraService
                     $q->where('id_asesor', $idAsesor);
                 }
             })
+            ->orderBy('hora')
+            ->orderBy('id')
             ->get();
 
-        $montoCobrado = (float) $pagosDelDia->where('tipo', 'Abono')->sum('monto');
+        $abonosDelDia = $pagosDelDia->where('tipo', 'Abono')->values();
+        $historialAbonos = Pago::query()
+            ->whereIn('num_prog', $abonosDelDia->pluck('num_prog')->unique())
+            ->where('tipo', 'Abono')
+            ->whereDate('fecha', '<=', $fechaRef->toDateString())
+            ->get()
+            ->groupBy('num_prog');
+
+        $abonosDelDia->groupBy('num_prog')->each(function ($pagos, $folio) use ($fechaRef, $historialAbonos) {
+            $credito = $pagos->first()->credito;
+            // Los abonos de mora conservan su clasificación de recuperación.
+            $clasificaciones = $credito->estado === 'EnMora'
+                ? []
+                : $this->clasificarAbonosDelDia($credito, $fechaRef, $historialAbonos->get($folio, collect()));
+            foreach ($pagos as $pago) {
+                $pago->setAttribute('monto_adelantado_hoy', (float) ($clasificaciones[$pago->id]['adelantado'] ?? 0));
+            }
+        });
+        $pagosAnticipados = $abonosDelDia
+            ->filter(fn (Pago $pago) => $pago->monto_adelantado_hoy > 0.009)
+            ->values();
+
+        $montoCobrado = (float) $abonosDelDia->sum('monto');
         $montoMultas = (float) $pagosDelDia->where('tipo', 'Multa')->sum('monto');
 
         return [
@@ -135,7 +159,9 @@ class CarteraService
             'monto_multas' => round($montoMultas, 2),
             // La vista diaria del gestor usa estos datos para mostrar sus
             // abonos capturados y permitir reimprimir cada comprobante.
-            'pagos' => $pagosDelDia->where('tipo', 'Abono')->values(),
+            'pagos' => $abonosDelDia,
+            'pagos_anticipados' => $pagosAnticipados,
+            'monto_anticipado' => round((float) $pagosAnticipados->sum('monto_adelantado_hoy'), 2),
             'cobros' => $cobros,
             'creditos_mora' => $creditosMora,
         ];
