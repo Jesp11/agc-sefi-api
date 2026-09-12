@@ -122,6 +122,37 @@ class PagoController extends Controller
         ]);
     }
 
+    public function recibir(Request $request, $numProg, Pago $pago)
+    {
+        $credito = Credito::with(['cliente', 'grupo', 'asesor'])->findOrFail($numProg);
+        $this->validarPagoDelCredito($credito, $pago);
+
+        if ($pago->tipo !== 'Abono') {
+            return response()->json(['message' => 'Solo los abonos pueden recibirse.'], 422);
+        }
+
+        $movimiento = \App\Models\MovimientoCaja::where('pago_id', $pago->id)->first();
+        if ($movimiento) {
+            return response()->json(['message' => 'Este abono ya ha sido recibido en caja.'], 422);
+        }
+
+        try {
+            app(\App\Services\FlujoCajaService::class)->sincronizarCobroRecibido(
+                $pago,
+                $credito,
+                (float) $pago->monto,
+                $request->input('fecha') ?? $pago->fecha->format('Y-m-d')
+            );
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json([
+            'message' => 'Abono recibido en caja exitosamente.',
+            'data' => $pago->fresh(),
+        ]);
+    }
+
     public function distribuirGrupal(Request $request, $numProg, DistribucionCreditoGrupalService $service)
     {
         $data = $request->validate(['distribucion' => ['required', 'array'], 'distribucion.*.id_cliente_integrante' => ['required', 'string'], 'distribucion.*.monto' => ['required', 'numeric', 'min:0']]);

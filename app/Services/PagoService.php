@@ -160,13 +160,14 @@ class PagoService
     {
         return $credito->pagos()
             ->with(['registradoPor:id,name', 'integrante:id_cliente,nombre_completo', 'asignacionesGrupales'])
+            ->withExists('movimientoCaja as recibido_en_caja')
             ->orderByDesc('fecha')
             ->orderByDesc('hora')
             ->orderByDesc('id')
             ->get();
     }
 
-    /** Actualiza un abono sin alterar la recepción de efectivo ya confirmada. */
+    /** Actualiza un abono y sincroniza su movimiento de caja si existe. */
     public function actualizarAbono(Credito $credito, Pago $pago, array $data): Pago
     {
         return DB::transaction(function () use ($credito, $pago, $data) {
@@ -183,6 +184,10 @@ class PagoService
                 'metodo_pago' => $data['metodo_pago'],
                 'notas' => $data['notas'] ?? null,
             ]);
+
+            if (MovimientoCaja::where('pago_id', $pago->id)->exists()) {
+                app(FlujoCajaService::class)->sincronizarDesdePago($pago, $credito);
+            }
 
             $this->syncCredito($credito);
 

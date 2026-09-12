@@ -83,6 +83,8 @@ Route::middleware('auth:api')->group(function () {
     Route::post('creditos/{num_prog}/pagos', [PagoController::class, 'store']);
     Route::put('creditos/{num_prog}/pagos/{pago}', [PagoController::class, 'update'])
         ->middleware('role:admin');
+    Route::post('creditos/{num_prog}/pagos/{pago}/recibir', [PagoController::class, 'recibir'])
+        ->middleware('role:admin');
     Route::delete('creditos/{num_prog}/pagos/{pago}', [PagoController::class, 'destroy'])
         ->middleware('role:admin');
     Route::put('creditos/{num_prog}/pagos-grupales/distribuir', [PagoController::class, 'distribuirGrupal'])
