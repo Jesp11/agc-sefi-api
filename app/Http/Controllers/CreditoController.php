@@ -57,7 +57,7 @@ class CreditoController extends Controller
 
             if (!$esPersonalizado && !$esAdicional) {
                 $creditoActivo = Credito::where('id_cliente', $cliente->id_cliente)
-                    ->whereIn('estado', ['Activo', 'EnMora'])
+                    ->whereIn('estado', ['Activo', 'EnMora', 'PendienteDesembolso'])
                     ->where('es_adicional', false)
                     ->exists();
 
@@ -66,7 +66,7 @@ class CreditoController extends Controller
                 }
 
                 $grupoConCreditoActivo = $cliente->grupos()->whereHas('creditos', function ($query) {
-                    $query->whereIn('estado', ['Activo', 'EnMora'])->where('es_adicional', false);
+                    $query->whereIn('estado', ['Activo', 'EnMora', 'PendienteDesembolso'])->where('es_adicional', false);
                 })->exists();
 
                 if ($grupoConCreditoActivo) {
@@ -87,7 +87,7 @@ class CreditoController extends Controller
 
             if (!$esPersonalizado && !$esAdicional) {
                 $creditoGrupoActivo = Credito::where('id_grupo', $grupo->id)
-                    ->whereIn('estado', ['Activo', 'EnMora'])
+                    ->whereIn('estado', ['Activo', 'EnMora', 'PendienteDesembolso'])
                     ->where('es_adicional', false)
                     ->exists();
 
@@ -96,14 +96,14 @@ class CreditoController extends Controller
                 }
 
                 foreach ($grupo->clientes as $integrante) {
-                    if (Credito::where('id_cliente', $integrante->id_cliente)->whereIn('estado', ['Activo', 'EnMora'])->where('es_adicional', false)->exists()) {
+                    if (Credito::where('id_cliente', $integrante->id_cliente)->whereIn('estado', ['Activo', 'EnMora', 'PendienteDesembolso'])->where('es_adicional', false)->exists()) {
                         return response()->json(['message' => "El integrante {$integrante->nombre_completo} ya cuenta con un crédito individual activo."], 422);
                     }
 
                     $otroGrupoActivo = $integrante->grupos()
                         ->where('grupos.id', '!=', $grupo->id)
                         ->whereHas('creditos', function ($query) {
-                            $query->whereIn('estado', ['Activo', 'EnMora'])->where('es_adicional', false);
+                            $query->whereIn('estado', ['Activo', 'EnMora', 'PendienteDesembolso'])->where('es_adicional', false);
                         })->exists();
 
                     if ($otroGrupoActivo) {
@@ -131,6 +131,9 @@ class CreditoController extends Controller
             : ($data['comision_apertura'] ?? $comisionApertura);
         $data['saldo_pendiente'] = $data['total'];
         $data['es_adicional'] = $esAdicional;
+        $data['estado'] = (float) $data['monto_otorgado'] - (float) $data['comision_apertura'] >= 0.01
+            ? 'PendienteDesembolso'
+            : 'Activo';
 
         $credito = DB::transaction(function () use ($data, $distribucionIntegrantes) {
             $credito = Credito::create($data);

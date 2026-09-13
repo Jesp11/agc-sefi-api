@@ -125,9 +125,9 @@ class FlujoCajaService
                 'categoria' => $confirmacion->categoria, 'cuenta' => $confirmacion->cuenta,
                 'num_prog' => $confirmacion->num_prog, 'referencia' => $confirmacion->referencia,
             ]);
-            $esRenovacion = mb_strtolower((string) $confirmacion->categoria) === 'renovacion';
+            $requiereGestor = $confirmacion->requiereConfirmacionGestor();
             $confirmacion->update([
-                'estado' => $esRenovacion ? 'EntregadoGestor' : 'Confirmado',
+                'estado' => $requiereGestor ? 'EntregadoGestor' : 'Confirmado',
                 'movimiento_caja_id' => $movimiento->id,
                 'confirmado_por' => auth()->id(), 'confirmado_at' => now(),
             ]);
@@ -139,7 +139,7 @@ class FlujoCajaService
     {
         return DB::transaction(function () use ($confirmacion) {
             $confirmacion = ConfirmacionMovimiento::lockForUpdate()->findOrFail($confirmacion->id);
-            if ($confirmacion->estado !== 'EntregadoGestor' || mb_strtolower((string) $confirmacion->categoria) !== 'renovacion') {
+            if ($confirmacion->estado !== 'EntregadoGestor' || ! $confirmacion->requiereConfirmacionGestor()) {
                 throw new \InvalidArgumentException('El desembolso no está pendiente de confirmación por gestor.');
             }
             $confirmacion->update([
@@ -160,7 +160,7 @@ class FlujoCajaService
     {
         return DB::transaction(function () use ($confirmacion) {
             $confirmacion = ConfirmacionMovimiento::lockForUpdate()->findOrFail($confirmacion->id);
-            if ($confirmacion->estado !== 'EntregadoGestor' || mb_strtolower((string) $confirmacion->categoria) !== 'renovacion') {
+            if ($confirmacion->estado !== 'EntregadoGestor' || ! $confirmacion->requiereConfirmacionGestor()) {
                 throw new \InvalidArgumentException('El desembolso no está disponible para cancelación por gestor.');
             }
             $confirmacion->update([
@@ -184,17 +184,19 @@ class FlujoCajaService
     {
         return DB::transaction(function () use ($confirmacion) {
             $confirmacion = ConfirmacionMovimiento::lockForUpdate()->findOrFail($confirmacion->id);
-            if ($confirmacion->estado !== 'PendienteReintegro' || mb_strtolower((string) $confirmacion->categoria) !== 'renovacion') {
+            if ($confirmacion->estado !== 'PendienteReintegro' || ! $confirmacion->requiereConfirmacionGestor()) {
                 throw new \InvalidArgumentException('El reintegro no está pendiente de confirmación.');
             }
 
+            $esRenovacion = mb_strtolower((string) $confirmacion->categoria) === 'renovacion';
+            $concepto = $esRenovacion ? 'RENOVACIÓN CANCELADA' : 'DESEMBOLSO CANCELADO';
             $movimiento = $this->registrar([
                 'fecha' => now()->toDateString(),
                 'id_asesor' => $confirmacion->id_asesor,
-                'motivo' => "REINTEGRO DE RENOVACIÓN CANCELADA #{$confirmacion->num_prog}",
+                'motivo' => "REINTEGRO DE {$concepto} #{$confirmacion->num_prog}",
                 'tipo' => 'Ingreso',
                 'monto' => $confirmacion->monto,
-                'categoria' => 'ReintegroRenovacion',
+                'categoria' => $esRenovacion ? 'ReintegroRenovacion' : 'ReintegroDesembolso',
                 'cuenta' => 'Efectivo',
                 'num_prog' => $confirmacion->num_prog,
                 'referencia' => "REINTEGRO-RENOVACION-{$confirmacion->id}",
@@ -215,13 +217,13 @@ class FlujoCajaService
     {
         return DB::transaction(function () use ($confirmacion, $fecha) {
             $confirmacion = ConfirmacionMovimiento::lockForUpdate()->findOrFail($confirmacion->id);
-            if ($confirmacion->estado !== 'Reintegrado' || mb_strtolower((string) $confirmacion->categoria) !== 'renovacion') {
-                throw new \InvalidArgumentException('Sólo se puede reprogramar una renovación con efectivo reintegrado.');
+            if ($confirmacion->estado !== 'Reintegrado' || ! $confirmacion->requiereConfirmacionGestor()) {
+                throw new \InvalidArgumentException('Sólo se puede reprogramar un desembolso con efectivo reintegrado.');
             }
 
             $credito = Credito::find($confirmacion->num_prog);
             if (! $credito) {
-                throw new \InvalidArgumentException('No se encontró el crédito de la renovación.');
+                throw new \InvalidArgumentException('No se encontró el crédito del desembolso.');
             }
             // Compatibilidad con renovaciones canceladas antes de que existiera
             // el estado PendienteDesembolso.
@@ -243,7 +245,7 @@ class FlujoCajaService
                 'id_asesor' => $confirmacion->id_asesor,
                 'motivo' => "REPROGRAMACIÓN — {$confirmacion->motivo}",
                 'monto' => $confirmacion->monto,
-                'categoria' => 'Renovacion',
+                'categoria' => $confirmacion->categoria,
                 'cuenta' => 'Efectivo',
                 'num_prog' => $confirmacion->num_prog,
                 'referencia' => "DESEMBOLSO-{$confirmacion->num_prog}-REINTENTO-{$intento}",

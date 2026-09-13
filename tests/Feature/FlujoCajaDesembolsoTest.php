@@ -123,8 +123,8 @@ class FlujoCajaDesembolsoTest extends TestCase
     {
         $flujoCaja = app(FlujoCajaService::class);
         $pendiente = $flujoCaja->solicitarConfirmacionEgreso([
-            'fecha' => '2026-09-05', 'motivo' => 'Desembolso por confirmar', 'tipo' => 'Egreso',
-            'monto' => 900, 'categoria' => 'Desembolso', 'cuenta' => 'Efectivo', 'referencia' => 'PRUEBA-CONF-1',
+            'fecha' => '2026-09-05', 'motivo' => 'Gasto por confirmar', 'tipo' => 'Egreso',
+            'monto' => 900, 'categoria' => 'Gasto', 'cuenta' => 'Efectivo', 'referencia' => 'PRUEBA-CONF-1',
         ]);
 
         $this->assertSame(0, MovimientoCaja::count());
@@ -134,7 +134,13 @@ class FlujoCajaDesembolsoTest extends TestCase
         $this->assertDatabaseHas('movimientos_caja', ['referencia' => 'PRUEBA-CONF-1', 'tipo' => 'Egreso', 'monto' => 900.00]);
     }
 
-    public function test_renewal_requires_manager_and_field_agent_confirmations_without_duplicate_cash_expense(): void
+    public static function categoriasDesembolso(): array
+    {
+        return [['Renovacion'], ['Desembolso']];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('categoriasDesembolso')]
+    public function test_disbursement_requires_manager_and_field_agent_confirmations_without_duplicate_cash_expense(string $categoria): void
     {
         $credito = Credito::create([
             'id_asesor' => 1, 'fecha_otorgacion' => '2026-09-05', 'monto_otorgado' => 3028,
@@ -143,14 +149,22 @@ class FlujoCajaDesembolsoTest extends TestCase
         $flujoCaja = app(FlujoCajaService::class);
         $pendiente = $flujoCaja->solicitarConfirmacionEgreso([
             'fecha' => '2026-09-05', 'id_asesor' => 1, 'motivo' => 'RENOVACIÓN A 14 SEMANAS — Virginia',
-            'tipo' => 'Egreso', 'monto' => 3028, 'categoria' => 'Renovacion', 'cuenta' => 'Efectivo', 'num_prog' => $credito->num_prog,
+            'tipo' => 'Egreso', 'monto' => 3028, 'categoria' => $categoria, 'cuenta' => 'Efectivo', 'num_prog' => $credito->num_prog,
             'referencia' => 'DESEMBOLSO-REN-1',
         ]);
 
+        $this->assertSame(0, MovimientoCaja::count());
         $entregadoAlGestor = $flujoCaja->confirmarEgresoPendiente($pendiente);
 
         $this->assertSame('EntregadoGestor', $entregadoAlGestor->estado);
         $this->assertSame(1, MovimientoCaja::where('referencia', 'DESEMBOLSO-REN-1')->count());
+
+        $this->assertSame('PendienteDesembolso', $credito->fresh()->estado);
+        $listado = app(\App\Http\Controllers\ConfirmacionMovimientoController::class)->index(
+            \Illuminate\Http\Request::create('/', 'GET', ['fecha' => '2026-09-05']),
+        );
+        $this->assertSame($pendiente->id, $listado->getData(true)[0]['id']);
+        $this->assertSame('EntregadoGestor', $listado->getData(true)[0]['estado']);
 
         $confirmado = $flujoCaja->confirmarDesembolsoRenovacionPorGestor($entregadoAlGestor);
 
@@ -158,9 +172,13 @@ class FlujoCajaDesembolsoTest extends TestCase
         $this->assertNotNull($confirmado->entregado_gestor_at);
         $this->assertSame(1, MovimientoCaja::where('referencia', 'DESEMBOLSO-REN-1')->count());
         $this->assertSame('Activo', $credito->fresh()->estado);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $flujoCaja->confirmarDesembolsoRenovacionPorGestor($confirmado);
     }
 
-    public function test_cancelled_renewal_requires_cash_reintegration_confirmation(): void
+    #[\PHPUnit\Framework\Attributes\DataProvider('categoriasDesembolso')]
+    public function test_cancelled_disbursement_requires_cash_reintegration_confirmation(string $categoria): void
     {
         $credito = Credito::create([
             'id_asesor' => 1, 'fecha_otorgacion' => '2026-09-05', 'monto_otorgado' => 1500,
@@ -169,7 +187,7 @@ class FlujoCajaDesembolsoTest extends TestCase
         $flujoCaja = app(FlujoCajaService::class);
         $pendiente = $flujoCaja->solicitarConfirmacionEgreso([
             'fecha' => '2026-09-05', 'id_asesor' => 1, 'motivo' => 'RENOVACIÓN NO ENTREGADA',
-            'tipo' => 'Egreso', 'monto' => 1500, 'categoria' => 'Renovacion', 'cuenta' => 'Efectivo',
+            'tipo' => 'Egreso', 'monto' => 1500, 'categoria' => $categoria, 'cuenta' => 'Efectivo',
             'referencia' => 'DESEMBOLSO-REN-CANCELADO', 'num_prog' => $credito->num_prog,
         ]);
 
@@ -189,11 +207,12 @@ class FlujoCajaDesembolsoTest extends TestCase
             'referencia' => "REINTEGRO-RENOVACION-{$pendiente->id}",
             'tipo' => 'Ingreso',
             'monto' => 1500.00,
-            'categoria' => 'ReintegroRenovacion',
+            'categoria' => $categoria === 'Renovacion' ? 'ReintegroRenovacion' : 'ReintegroDesembolso',
         ]);
 
         $reprogramado = $flujoCaja->reprogramarDesembolsoRenovacion($reintegrado, '2026-09-10');
         $this->assertSame('Pendiente', $reprogramado->estado);
+        $this->assertSame($categoria, $reprogramado->categoria);
         $this->assertSame('2026-09-10', $reprogramado->fecha->toDateString());
         $this->assertSame('Reprogramado', $reintegrado->fresh()->estado);
         $this->assertSame('PendienteDesembolso', $credito->fresh()->estado);

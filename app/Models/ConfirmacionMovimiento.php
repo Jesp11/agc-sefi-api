@@ -6,6 +6,13 @@ use Illuminate\Database\Eloquent\Model;
 
 class ConfirmacionMovimiento extends Model
 {
+    public const CATEGORIAS_DESEMBOLSO = ['Renovacion', 'Desembolso'];
+
+    public function requiereConfirmacionGestor(): bool
+    {
+        return in_array(mb_strtolower((string) $this->categoria), ['renovacion', 'desembolso'], true);
+    }
+
     protected $table = 'confirmaciones_movimientos';
 
     protected $fillable = [

@@ -14,7 +14,7 @@ class ConfirmacionMovimientoController extends Controller
         $fecha = $request->validate(['fecha' => ['nullable', 'date']])['fecha'] ?? now()->toDateString();
 
         $foliosConDesembolsoEnProceso = ConfirmacionMovimiento::whereIn('estado', ['Pendiente', 'EntregadoGestor'])
-            ->where('categoria', 'Renovacion')
+            ->whereIn('categoria', ConfirmacionMovimiento::CATEGORIAS_DESEMBOLSO)
             ->whereNotNull('num_prog')
             ->pluck('num_prog')
             ->map(fn ($folio) => (int) $folio)
@@ -24,7 +24,7 @@ class ConfirmacionMovimientoController extends Controller
             ->where(function ($query) {
                 $query->where('estado', 'Pendiente')
                     ->orWhere(function ($renovaciones) {
-                        $renovaciones->where('categoria', 'Renovacion')
+                        $renovaciones->whereIn('categoria', ConfirmacionMovimiento::CATEGORIAS_DESEMBOLSO)
                             ->whereNotNull('movimiento_caja_id')
                             ->whereIn('estado', ['EntregadoGestor', 'Confirmado', 'PendienteReintegro', 'Reintegrado', 'Reprogramado', 'Cancelado']);
                     });
@@ -37,7 +37,7 @@ class ConfirmacionMovimientoController extends Controller
 
                 // Los pendientes que aún requieren recuperar o volver a enviar
                 // efectivo no se ocultan al pasar de día.
-                return $movimiento->categoria === 'Renovacion'
+                return $movimiento->requiereConfirmacionGestor()
                     && in_array($movimiento->estado, ['PendienteReintegro', 'Reintegrado'], true)
                     && $movimiento->credito?->estado === 'PendienteDesembolso'
                     && ($movimiento->estado !== 'Reintegrado'
@@ -79,7 +79,7 @@ class ConfirmacionMovimientoController extends Controller
 
         return response()->json(ConfirmacionMovimiento::with(['credito.cliente', 'credito.grupo'])
             ->whereDate('fecha', $fecha)
-            ->where('categoria', 'Renovacion')
+            ->whereIn('categoria', ConfirmacionMovimiento::CATEGORIAS_DESEMBOLSO)
             ->where('id_asesor', $user->id_asesor)
             ->whereNotNull('movimiento_caja_id')
             ->whereIn('estado', ['EntregadoGestor', 'Confirmado', 'PendienteReintegro', 'Reintegrado', 'Cancelado'])
