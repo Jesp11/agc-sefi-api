@@ -11,12 +11,13 @@ use App\Models\MovimientoCapital;
 use App\Services\FlujoCajaService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class NominaController extends Controller
 {
     public function index()
     {
-        return response()->json(NominaPeriodo::with(['detalles.asesor', 'detalles.empleado'])->orderByDesc('fecha_inicio')->paginate(10));
+        return response()->json(NominaPeriodo::with(['detalles.asesor', 'detalles.empleado'])->orderByDesc('fecha_inicio')->orderByDesc('id')->paginate(10));
     }
 
     public function store(Request $request, FlujoCajaService $flujoCajaService)
@@ -35,6 +36,14 @@ class NominaController extends Controller
             'empleados.*.ahorro' => 'required|numeric|min:0',
         ]);
 
+        foreach ($data['empleados'] as $index => $empleado) {
+            if (round($empleado['ahorro'], 2) > round($empleado['pago_base'] + $empleado['despensa'] + $empleado['apoyo_transporte'], 2)) {
+                throw ValidationException::withMessages([
+                    "empleados.{$index}.ahorro" => 'El ahorro no puede superar las percepciones del empleado.',
+                ]);
+            }
+        }
+
         DB::beginTransaction();
         try {
             $periodo = NominaPeriodo::create([
@@ -47,12 +56,15 @@ class NominaController extends Controller
             ]);
 
             $totalDispersado = 0;
+            $totalAhorro = 0;
+            $asesores = Asesor::whereIn('id', array_column($data['empleados'], 'asesor_id'))->get()->keyBy('id');
             $pagosNomina = [];
             foreach ($data['empleados'] as $empData) {
-                $percepciones = $empData['pago_base'] + $empData['despensa'] + $empData['apoyo_transporte'];
-                $retencion = $empData['ahorro'];
+                $percepciones = round($empData['pago_base'] + $empData['despensa'] + $empData['apoyo_transporte'], 2);
+                $retencion = round($empData['ahorro'], 2);
                 $deducciones = $retencion;
-                $neto = $percepciones - $deducciones;
+                $neto = round($percepciones - $deducciones, 2);
+                $asesor = $asesores->get($empData['asesor_id']);
 
                 NominaDetalle::create([
                     'periodo_id' => $periodo->id,
@@ -65,7 +77,15 @@ class NominaController extends Controller
                     'retencion_ahorro' => $retencion,
                     'total_deducciones' => $deducciones,
                     'sueldo_neto' => $neto,
-                    'detalle_ajustes' => []
+                    'detalle_ajustes' => ['empleado' => [
+                        'nombre' => $asesor->nombre_asesor,
+                        'fecha_nacimiento' => $asesor->cumpleanos,
+                        'rfc' => $asesor->rfc,
+                        'curp' => $asesor->curp,
+                        'nss' => $asesor->nss,
+                        'banco' => $asesor->banco,
+                        'cuenta_bancaria' => $asesor->cuenta_bancaria,
+                    ]],
                 ]);
 
                 if ($retencion > 0) {
@@ -76,8 +96,19 @@ class NominaController extends Controller
                         'tipo' => 'Ingreso',
                         'monto' => $retencion,
                         'fecha' => $data['fecha_fin'],
-                        'notas' => "Nómina periodo #{$periodo->id}" . ($data['referencia'] ? " Ref: {$data['referencia']}" : ""),
+                        'notas' => "Nómina periodo #{$periodo->id}" . (!empty($data['referencia']) ? " Ref: {$data['referencia']}" : ""),
                         'registrado_por' => auth()->id(),
+                    ]);
+                    $totalAhorro += $retencion;
+                    $referenciaMovimiento = $data['referencia'] ?? "Periodo #{$periodo->id}";
+                    $flujoCajaService->solicitarConfirmacionEgreso([
+                        'fecha' => $data['fecha_fin'],
+                        'id_asesor' => $empData['asesor_id'],
+                        'motivo' => "AHORRO POR NÓMINA — {$referenciaMovimiento} — {$asesor->nombre_asesor}",
+                        'tipo' => 'Egreso',
+                        'monto' => $retencion,
+                        'categoria' => 'Nomina',
+                        'referencia' => "NOM-{$periodo->id}-AHORRO-ASESOR-{$empData['asesor_id']}",
                     ]);
                 }
 
@@ -94,20 +125,17 @@ class NominaController extends Controller
 
             MovimientoCapital::create([
                 'tipo' => 'Nomina',
-                'monto' => -$totalDispersado,
-                'referencia' => $data['referencia'] ? "NOM-{$data['referencia']}" : "NOM-{$periodo->id}",
+                'monto' => -round($totalDispersado + $totalAhorro, 2),
+                'referencia' => !empty($data['referencia']) ? "NOM-{$data['referencia']}" : "NOM-{$periodo->id}",
                 'fecha' => $data['fecha_fin'],
-                'descripcion' => "Dispersión nómina {$data['fecha_inicio']} - {$data['fecha_fin']}",
+                'descripcion' => "Nómina y ahorro {$data['fecha_inicio']} - {$data['fecha_fin']}",
                 'registrado_por' => auth()->id(),
             ]);
 
             if ($totalDispersado > 0) {
                 $referenciaMovimiento = $data['referencia'] ?? "Periodo #{$periodo->id}";
-                $asesores = Asesor::whereIn('id', collect($pagosNomina)->pluck('asesor_id'))
-                    ->pluck('nombre_asesor', 'id');
-
                 foreach ($pagosNomina as $pago) {
-                    $nombre = $asesores[$pago['asesor_id']] ?? "Empleado #{$pago['asesor_id']}";
+                    $nombre = $asesores->get($pago['asesor_id'])?->nombre_asesor ?? "Empleado #{$pago['asesor_id']}";
                     $flujoCajaService->solicitarConfirmacionEgreso([
                         'fecha' => $data['fecha_fin'],
                         'id_asesor' => $pago['asesor_id'],

@@ -224,6 +224,34 @@ class PagosAtrasadosReportTest extends TestCase
         $this->assertSame(10.0, (float) $pagoReportado->saldo_favor_cliente);
     }
 
+    public function test_daily_report_receivable_only_includes_the_advisors_scheduled_route(): void
+    {
+        $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
+        $cliente = $this->cliente('CLI-001', 'Cliente Ana');
+        $ruta = $this->credito($advisor, $cliente, 'Activo', '2026-09-05', 4);
+        $adelantado = $this->credito($advisor, $cliente, 'Activo', '2026-09-12', 4);
+        $mora = $this->credito($advisor, $cliente, 'EnMora', '2026-08-01', 2);
+
+        foreach ([$ruta, $adelantado, $mora] as $credito) {
+            Pago::create([
+                'num_prog' => $credito->num_prog,
+                'monto' => 150,
+                'fecha' => '2026-09-05',
+                'hora' => '09:00:00',
+                'tipo' => 'Abono',
+            ]);
+        }
+
+        $reporte = app(ReportService::class)->reporteDiario('2026-09-05');
+        $asesor = collect($reporte['por_asesor'])->firstWhere('id_asesor', $advisor->id);
+
+        $this->assertSame(450.0, $asesor['total_cobrado']);
+        $this->assertSame(100.0, $asesor['prog_del_dia']);
+        $this->assertSame(100.0, $asesor['a_recibir']);
+        $this->assertSame(100.0, $asesor['a_recibir_bruto']);
+        $this->assertSame(100.0, $reporte['total_a_recibir']);
+    }
+
     public function test_daily_report_lists_an_early_payment_once_and_omits_its_future_installment(): void
     {
         $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
@@ -244,6 +272,8 @@ class PagosAtrasadosReportTest extends TestCase
 
         $this->assertSame([$pago->id], collect($reportePago['pagos_anticipados'])->pluck('id')->all());
         $this->assertSame([$pago->id], collect($asesorPago['pagos_anticipados'])->pluck('id')->all());
+        $this->assertSame(100.0, $asesorPago['total_cobrado']);
+        $this->assertSame(0.0, $asesorPago['a_recibir']);
         $this->assertNull($asesorVencimiento);
         $this->assertSame([], $reporteVencimiento['cobros_programados']->all());
     }

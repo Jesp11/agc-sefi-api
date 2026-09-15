@@ -286,9 +286,9 @@ class ReportService
                 // esa fecha. Los atrasados se consultan y gestionan por
                 // separado; incluirlos aquí hacía que "A recibir" no
                 // coincidiera con la ruta mostrada al gestor.
-                // Si hubo abonos mayores a la ruta del día, se conserva el
-                // monto realmente cobrado porque también debe entregarse.
-                $aRecibirBruto = max($cobrado, $progDelDia);
+                // Todos los abonos capturados se muestran en total_cobrado;
+                // no incrementan el importe programado de la ruta.
+                $aRecibirBruto = $progDelDia;
                 // La comisión de renovación la retiene gerencia antes de
                 // entregar el efectivo neto. Se conserva como referencia en
                 // el corte, pero no reduce la entrega del gestor.
