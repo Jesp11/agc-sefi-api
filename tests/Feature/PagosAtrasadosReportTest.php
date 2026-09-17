@@ -305,6 +305,41 @@ class PagosAtrasadosReportTest extends TestCase
         $this->assertSame([], $reporteVencimiento['cobros_programados']->all());
     }
 
+    public function test_daily_report_includes_payment_number_for_ticket_reprints(): void
+    {
+        $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
+        $cliente = $this->cliente('CLI-001', 'Cliente Ana');
+        $credito = $this->credito($advisor, $cliente, 'Activo', '2026-08-01', 4);
+
+        Pago::create([
+            'num_prog' => $credito->num_prog,
+            'monto' => 100,
+            'fecha' => '2026-08-08',
+            'hora' => '09:00:00',
+            'tipo' => 'Abono',
+        ]);
+        $segundoPago = Pago::create([
+            'num_prog' => $credito->num_prog,
+            'monto' => 100,
+            'fecha' => '2026-08-15',
+            'hora' => '09:00:00',
+            'tipo' => 'Abono',
+        ]);
+        Pago::create([
+            'num_prog' => $credito->num_prog,
+            'monto' => 100,
+            'fecha' => '2026-08-22',
+            'hora' => '09:00:00',
+            'tipo' => 'Abono',
+        ]);
+
+        $reporte = app(ReportService::class)->reporteDiario('2026-08-15');
+        $pagoTicket = collect($reporte['pagos'])->firstWhere('id', $segundoPago->id);
+
+        $this->assertSame(2, $pagoTicket->num_pago);
+        $this->assertSame(4, $pagoTicket->total_pagos);
+    }
+
     public function test_daily_report_moves_the_payment_after_settling_arrears_to_advance_payments(): void
     {
         $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);

@@ -72,10 +72,24 @@ class ReportService
         }
 
         $pagos = $pagosQuery->get();
+        $numerosPago = Pago::query()
+            ->whereIn('num_prog', $pagos->pluck('num_prog')->unique())
+            ->where('tipo', 'Abono')
+            ->orderBy('id')
+            ->get(['id', 'num_prog'])
+            ->groupBy('num_prog')
+            ->flatMap(fn ($abonos) => $abonos->values()->mapWithKeys(
+                fn (Pago $abono, int $indice) => ["pago_{$abono->id}" => $indice + 1]
+            ));
+
         foreach ($pagos as $pago) {
             $recibido = round(min((float) $pago->monto, (float) ($pago->movimientoCaja?->monto ?? 0)), 2);
             $pago->setAttribute('monto_recibido_caja', $recibido);
             $pago->setAttribute('monto_pendiente_caja', round(max(0, (float) $pago->monto - $recibido), 2));
+            if ($pago->tipo === 'Abono') {
+                $pago->setAttribute('num_pago', (int) ($numerosPago->get("pago_{$pago->id}") ?? 0));
+                $pago->setAttribute('total_pagos', (int) ($pago->credito?->plazos ?? 0));
+            }
         }
         $creditos = $creditosQuery->get();
 
