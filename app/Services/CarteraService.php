@@ -123,17 +123,23 @@ class CarteraService
             ->whereIn('num_prog', $abonosDelDia->pluck('num_prog')->unique())
             ->where('tipo', 'Abono')
             ->whereDate('fecha', '<=', $fechaRef->toDateString())
+            ->orderBy('id')
             ->get()
             ->groupBy('num_prog');
 
         $abonosDelDia->groupBy('num_prog')->each(function ($pagos, $folio) use ($fechaRef, $historialAbonos) {
             $credito = $pagos->first()->credito;
+            $numerosPago = $historialAbonos->get($folio, collect())
+                ->values()
+                ->mapWithKeys(fn (Pago $abono, int $indice) => ["pago_{$abono->id}" => $indice + 1]);
             // Los abonos de mora conservan su clasificación de recuperación.
             $clasificaciones = $credito->estado === 'EnMora'
                 ? []
                 : $this->clasificarAbonosDelDia($credito, $fechaRef, $historialAbonos->get($folio, collect()));
             foreach ($pagos as $pago) {
                 $pago->setAttribute('monto_adelantado_hoy', (float) ($clasificaciones[$pago->id]['adelantado'] ?? 0));
+                $pago->setAttribute('num_pago', (int) ($numerosPago->get("pago_{$pago->id}") ?? 0));
+                $pago->setAttribute('total_pagos', (int) ($credito->plazos ?? 0));
             }
         });
         $pagosAnticipados = $abonosDelDia

@@ -387,6 +387,34 @@ class PagosAtrasadosReportTest extends TestCase
         $this->assertSame(100.0, (float) $ticket['monto']);
     }
 
+    public function test_gestor_daily_report_includes_payment_number_for_ticket_reprints(): void
+    {
+        $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
+        $cliente = $this->cliente('CLI-001', 'Cliente Ana');
+        $credito = $this->credito($advisor, $cliente, 'Activo', '2026-08-01', 4);
+
+        Pago::create([
+            'num_prog' => $credito->num_prog,
+            'monto' => 100,
+            'fecha' => '2026-08-08',
+            'hora' => '09:00:00',
+            'tipo' => 'Abono',
+        ]);
+        $segundoPago = Pago::create([
+            'num_prog' => $credito->num_prog,
+            'monto' => 100,
+            'fecha' => '2026-08-15',
+            'hora' => '09:00:00',
+            'tipo' => 'Abono',
+        ]);
+
+        $reporte = app(CarteraService::class)->cobrosDelDia('2026-08-15', $advisor->id);
+        $pagoTicket = collect($reporte['pagos'])->firstWhere('id', $segundoPago->id);
+
+        $this->assertSame(2, $pagoTicket->num_pago);
+        $this->assertSame(4, $pagoTicket->total_pagos);
+    }
+
     public function test_gestor_daily_advances_split_mixed_payments_and_keep_final_payment_ticket(): void
     {
         $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
