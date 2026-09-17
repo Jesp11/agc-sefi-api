@@ -190,6 +190,8 @@ Route::middleware('auth:api')->group(function () {
     // Reportes
     Route::get('reportes/diario', [ReporteController::class, 'diario']);
     Route::get('reportes/pagos-atrasados', [ReporteController::class, 'pagosAtrasados']);
+    Route::post('reportes/diario/abonos/{pago}/recibir', [ReporteController::class, 'recibirAbono'])
+        ->middleware('role:admin');
     Route::post('reportes/diario/recibir', [ReporteController::class, 'recibirAsesor'])
         ->middleware('role:admin');
     Route::post('reportes/diario/pagos-ruta/preview', [PagosRutaImportController::class, 'preview'])

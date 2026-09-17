@@ -53,7 +53,7 @@ class ReportService
             })
             ->pluck('id');
 
-        $pagosQuery = Pago::with(['credito.cliente', 'credito.grupo', 'credito.asesor'])
+        $pagosQuery = Pago::with(['credito.cliente', 'credito.grupo', 'credito.asesor', 'movimientoCaja'])
             ->withExists('movimientoCaja as recibido_en_caja')
             ->whereDate('fecha', $fecha);
 
@@ -72,6 +72,11 @@ class ReportService
         }
 
         $pagos = $pagosQuery->get();
+        foreach ($pagos as $pago) {
+            $recibido = round(min((float) $pago->monto, (float) ($pago->movimientoCaja?->monto ?? 0)), 2);
+            $pago->setAttribute('monto_recibido_caja', $recibido);
+            $pago->setAttribute('monto_pendiente_caja', round(max(0, (float) $pago->monto - $recibido), 2));
+        }
         $creditos = $creditosQuery->get();
 
         // Los créditos en mora no forman parte de la ruta ordinaria, pero sus
@@ -385,8 +390,46 @@ class ReportService
     }
 
     /**
-     * Admin registra el efectivo recibido de un asesor en un día.
+     * Completa la recepción de un abono y actualiza el corte del gestor.
      */
+    public function recibirAbonoDiario(Pago $pago): void
+    {
+        $credito = $pago->credito;
+        if ($pago->tipo !== 'Abono' || ! $credito?->id_asesor) {
+            throw new InvalidArgumentException('Solo se pueden recibir abonos con un gestor asignado.');
+        }
+
+        DB::transaction(function () use ($pago, $credito) {
+            Asesor::whereKey($credito->id_asesor)->lockForUpdate()->firstOrFail();
+            $pago = Pago::whereKey($pago->id)->lockForUpdate()->firstOrFail();
+            $fecha = $pago->fecha->toDateString();
+            $recibido = (float) MovimientoCaja::where('pago_id', $pago->id)->value('monto');
+            $pendiente = round(max(0, (float) $pago->monto - $recibido), 2);
+            if ($pendiente < 0.01) {
+                return;
+            }
+
+            $pagosDia = Pago::whereDate('fecha', $fecha)->where('tipo', 'Abono')
+                ->whereHas('credito', fn ($q) => $q->where('id_asesor', $credito->id_asesor));
+            $totalPrevio = (float) MovimientoCaja::whereIn('pago_id', (clone $pagosDia)->select('id'))->sum('monto');
+            $recepcion = RecepcionAsesor::whereDate('fecha', $fecha)
+                ->where('id_asesor', $credito->id_asesor)->lockForUpdate()->first();
+
+            $this->flujoCajaService->sincronizarCobroRecibido($pago, $credito, (float) $pago->monto, $fecha);
+            $datos = [
+                'monto_esperado' => (float) $pagosDia->sum('monto'),
+                // Aprovecha el efectivo del corte aún no vinculado a un abono.
+                'monto_recibido' => round(max((float) ($recepcion?->monto_recibido ?? 0), $totalPrevio + $pendiente), 2),
+                'registrado_por' => Auth::id(),
+            ];
+            if ($recepcion) {
+                $recepcion->update($datos);
+            } else {
+                RecepcionAsesor::create(['fecha' => $fecha, 'id_asesor' => $credito->id_asesor, ...$datos]);
+            }
+        });
+    }
+
     public function registrarRecepcionAsesor(
         string $fecha,
         int $idAsesor,
@@ -402,6 +445,7 @@ class ReportService
         Asesor::findOrFail($idAsesor);
 
         return DB::transaction(function () use ($fecha, $idAsesor, $montoRecibido, $notas, $agregar) {
+            Asesor::whereKey($idAsesor)->lockForUpdate()->firstOrFail();
             // Bloquea el corte actual para que dos recepciones consecutivas no
             // se pisen entre sí al usar la acción "Agregar".
             $recepcion = RecepcionAsesor::whereDate('fecha', $fecha)
@@ -423,10 +467,10 @@ class ReportService
                 ->unique()
                 ->values();
 
-            $pagos = Pago::with(['credito.cliente', 'credito.grupo'])
+            $pagos = Pago::with(['credito.cliente', 'credito.grupo', 'movimientoCaja'])
                 ->whereDate('fecha', $fecha)
                 ->where('tipo', 'Abono')
-                ->whereIn('num_prog', $foliosElegibles)
+                ->where(fn ($q) => $q->whereIn('num_prog', $foliosElegibles)->orWhereHas('movimientoCaja'))
                 ->whereHas('credito', fn ($q) => $q->where('id_asesor', $idAsesor))
                 ->orderBy('hora')
                 ->orderBy('id')
@@ -450,18 +494,23 @@ class ReportService
                 ]);
             }
 
-            // En una recepción parcial se aplica el efectivo en orden de
-            // captura. Así nunca se contabiliza más de lo que llegó a caja.
-            $restante = min($montoFinal, $esperado);
-            foreach ($pagos as $pago) {
-                $aplicado = min($restante, (float) $pago->monto);
-                $this->flujoCajaService->sincronizarCobroRecibido(
-                    $pago,
-                    $pago->credito,
-                    $aplicado,
-                    $fecha,
-                );
-                $restante = round(max(0, $restante - $aplicado), 2);
+            // Conserva los abonos recibidos individualmente. Sólo distribuye
+            // el incremento; una corrección a la baja retira primero los últimos.
+            $actual = round((float) $pagos->sum(fn ($pago) => (float) ($pago->movimientoCaja?->monto ?? 0)), 2);
+            $diferencia = round(min($montoFinal, $esperado) - $actual, 2);
+            foreach ($diferencia < 0 ? $pagos->reverse() : $pagos as $pago) {
+                if (abs($diferencia) < 0.01) {
+                    break;
+                }
+                $previo = (float) ($pago->movimientoCaja?->monto ?? 0);
+                $ajuste = $diferencia > 0
+                    ? min($diferencia, max(0, (float) $pago->monto - $previo))
+                    : -min(-$diferencia, $previo);
+                if (abs($ajuste) < 0.01) {
+                    continue;
+                }
+                $this->flujoCajaService->sincronizarCobroRecibido($pago, $pago->credito, $previo + $ajuste, $fecha);
+                $diferencia = round($diferencia - $ajuste, 2);
             }
 
             return $recepcion->load(['asesor', 'registradoPor:id,name']);

@@ -227,6 +227,62 @@ class PagosRutaImportServiceTest extends TestCase
         return ['partial' => [160.0], 'full' => [200.0]];
     }
 
+    public function test_individual_receipt_preserves_selected_payment_and_completes_partial_without_duplicates(): void
+    {
+        $credito = $this->credito();
+        $pagos = app(PagoService::class);
+        $primero = $pagos->registrar($credito, [
+            'fecha' => '2026-09-05', 'hora' => '09:00:00', 'monto' => 100,
+        ])['pago'];
+        $segundo = $pagos->registrar($credito, [
+            'fecha' => '2026-09-05', 'hora' => '10:00:00', 'monto' => 100,
+        ])['pago'];
+        $reportes = app(ReportService::class);
+        $reportes->recibirAbonoDiario($segundo);
+        $this->assertDatabaseMissing('movimientos_caja', ['pago_id' => $primero->id]);
+        $this->assertDatabaseHas('movimientos_caja', ['pago_id' => $segundo->id, 'monto' => 100]);
+        $this->assertDatabaseHas('recepciones_asesor', ['id_asesor' => $credito->id_asesor, 'monto_recibido' => 100]);
+
+        $reportes->registrarRecepcionAsesor('2026-09-05', $credito->id_asesor, 50, agregar: true);
+        $this->assertDatabaseHas('movimientos_caja', ['pago_id' => $primero->id, 'monto' => 50]);
+        $this->assertDatabaseHas('movimientos_caja', ['pago_id' => $segundo->id, 'monto' => 100]);
+
+        $reportes->recibirAbonoDiario($primero);
+        $reportes->recibirAbonoDiario($primero);
+        $this->assertSame(2, MovimientoCaja::count());
+        $this->assertSame(200.0, (float) MovimientoCaja::sum('monto'));
+        $this->assertDatabaseHas('recepciones_asesor', ['id_asesor' => $credito->id_asesor, 'monto_recibido' => 200]);
+
+        $reportes->registrarRecepcionAsesor('2026-09-05', $credito->id_asesor, 75);
+        $this->assertSame(75.0, (float) MovimientoCaja::sum('monto'));
+        $this->assertDatabaseHas('movimientos_caja', ['pago_id' => $primero->id, 'monto' => 75]);
+        $this->assertDatabaseMissing('movimientos_caja', ['pago_id' => $segundo->id]);
+    }
+
+    public function test_individual_receipt_does_not_count_unallocated_cash_twice(): void
+    {
+        $credito = $this->credito();
+        $reportes = app(ReportService::class);
+        $reportes->registrarRecepcionAsesor('2026-09-05', $credito->id_asesor, 100);
+        $pago = app(PagoService::class)->registrar($credito, [
+            'fecha' => '2026-09-05', 'hora' => '09:00:00', 'monto' => 100,
+        ])['pago'];
+        $reportes->recibirAbonoDiario($pago);
+        $this->assertSame(100.0, (float) MovimientoCaja::sum('monto'));
+        $this->assertDatabaseHas('recepciones_asesor', ['id_asesor' => $credito->id_asesor, 'monto_recibido' => 100]);
+    }
+
+    public function test_individual_receipt_rejects_fines(): void
+    {
+        $credito = $this->credito();
+        $pago = Pago::create([
+            'num_prog' => $credito->num_prog, 'fecha' => '2026-09-05',
+            'hora' => '09:00:00', 'monto' => 20, 'tipo' => 'Multa',
+        ]);
+        $this->expectException(\InvalidArgumentException::class);
+        app(ReportService::class)->recibirAbonoDiario($pago);
+    }
+
     private function credito(): Credito
     {
         $asesor = Asesor::create(['nombre_asesor' => 'Gestora']);

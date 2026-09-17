@@ -35,7 +35,8 @@ class CreditoController extends Controller
         $query = Credito::with(['cliente', 'grupo', 'asesor']);
 
         $user = auth()->user();
-        if ($user && RoleHelper::isFieldLike($user->role?->nombre) && $user->id_asesor) {
+        if ($user && RoleHelper::isFieldLike($user->role?->nombre)) {
+            abort_unless((int) $user->id_asesor > 0, 403, 'Tu usuario no tiene un gestor vinculado. Solicita a administración que lo asigne.');
             $query->where('id_asesor', $user->id_asesor);
         }
 

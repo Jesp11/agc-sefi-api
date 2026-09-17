@@ -7,6 +7,7 @@ use App\Models\Cliente;
 use App\Models\Credito;
 use App\Models\Grupo;
 use App\Models\Pago;
+use App\Models\RecepcionAsesor;
 use App\Models\Refinanciamiento;
 use App\Http\Controllers\CarteraController;
 use App\Services\CarteraService;
@@ -224,6 +225,32 @@ class PagosAtrasadosReportTest extends TestCase
         $this->assertSame(10.0, (float) $pagoReportado->saldo_favor_cliente);
     }
 
+    public function test_daily_report_exposes_actual_received_and_pending_amounts_per_payment(): void
+    {
+        $advisor = Asesor::create(['nombre_asesor' => 'Gestora']);
+        $credito = $this->credito($advisor, $this->cliente('CLI-001', 'Cliente'), 'Activo', '2026-09-05', 4);
+        $pagos = collect([0, 40, 100])->map(function ($recibido) use ($credito, $advisor) {
+            $pago = Pago::create([
+                'num_prog' => $credito->num_prog, 'monto' => 100,
+                'fecha' => '2026-09-05', 'hora' => '09:00:00', 'tipo' => 'Abono',
+            ]);
+            if ($recibido > 0) {
+                \App\Models\MovimientoCaja::create([
+                    'pago_id' => $pago->id, 'num_prog' => $credito->num_prog, 'id_asesor' => $advisor->id,
+                    'fecha' => '2026-09-05', 'tipo' => 'Ingreso', 'monto' => $recibido,
+                    'motivo' => 'Recepción', 'categoria' => 'CobroCartera',
+                ]);
+            }
+            return $pago;
+        });
+        $reporte = app(ReportService::class)->reporteDiario('2026-09-05');
+        foreach ([0, 40, 100] as $i => $recibido) {
+            $pago = collect($reporte['pagos'])->firstWhere('id', $pagos[$i]->id);
+            $this->assertSame((float) $recibido, $pago->monto_recibido_caja);
+            $this->assertSame((float) (100 - $recibido), $pago->monto_pendiente_caja);
+        }
+    }
+
     public function test_daily_report_receivable_only_includes_the_advisors_scheduled_route(): void
     {
         $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
@@ -363,6 +390,26 @@ class PagosAtrasadosReportTest extends TestCase
         $this->assertSame(0.0, $reporte['monto_anticipado']);
         $this->assertCount(1, $reporte['creditos_mora']);
         $this->assertTrue($reporte['creditos_mora'][0]['pagado_hoy']);
+    }
+
+    public function test_gestor_daily_collection_shows_confirmed_cash_delivery_read_only(): void
+    {
+        $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
+        $cliente = $this->cliente('CLI-001', 'Cliente Ana');
+        $credito = $this->credito($advisor, $cliente, 'Activo', '2026-08-01', 2);
+        Pago::create(['num_prog' => $credito->num_prog, 'monto' => 150, 'fecha' => '2026-08-08', 'tipo' => 'Abono']);
+        RecepcionAsesor::create([
+            'fecha' => '2026-08-08',
+            'id_asesor' => $advisor->id,
+            'monto_esperado' => 150,
+            'monto_recibido' => 100,
+        ]);
+
+        $reporte = app(CarteraService::class)->cobrosDelDia('2026-08-08', $advisor->id);
+
+        $this->assertTrue($reporte['recepcion_confirmada']);
+        $this->assertSame(100.0, $reporte['entregado_caja']);
+        $this->assertSame(50.0, $reporte['pendiente_entrega_caja']);
     }
 
     public function test_admin_daily_report_only_lists_collection_managers(): void
@@ -521,6 +568,60 @@ class PagosAtrasadosReportTest extends TestCase
         ]);
     }
 
+    public function test_portfolios_only_return_the_logged_in_field_users_credits(): void
+    {
+        $asesores = [Asesor::create(['nombre_asesor' => 'Ana']), Asesor::create(['nombre_asesor' => 'Beto'])];
+        foreach ($asesores as $i => $asesor) {
+            foreach (['Activo', 'EnMora', 'CerradoSinRenovacion'] as $j => $estado) {
+                foreach (['Individual', 'Grupal'] as $k => $tipo) {
+                    $cliente = $this->cliente("CLI-{$i}-{$j}-{$k}", 'Cliente de prueba');
+                    $credito = $this->credito($asesor, $cliente, $estado, '2026-08-01', 4);
+                    $credito->update(['tipo_credito' => $tipo, 'ciclo_inicio_mora' => $estado === 'CerradoSinRenovacion' ? 1 : null]);
+                }
+            }
+        }
+        $endpoints = [
+            '/cartera/activa', '/cartera/activa?tipo=individual', '/cartera/activa?tipo=grupal',
+            '/cartera/mora', '/cartera/mora-activa', '/cartera/mora-muerta', '/cartera/cerrados',
+            '/creditos', '/reportes/cartera?tipo=general', '/reportes/cartera?tipo=individual',
+            '/reportes/cartera?tipo=grupal',
+        ];
+        foreach (['asesor', 'Gestor de Cobranza', 'Asesor Financiero'] as $rol) {
+            $user = new \App\Models\User(['id_asesor' => $asesores[0]->id]);
+            $user->id = 999;
+            $user->setRelation('role', new \App\Models\Role(['nombre' => $rol]));
+            $this->actingAs($user, 'api');
+            foreach ($endpoints as $endpoint) {
+                $url = '/api'.$endpoint.(str_contains($endpoint, '?') ? '&' : '?').'id_asesor='.$asesores[1]->id;
+                $response = $this->getJson($url)->assertOk();
+                $rows = $response->json('data') ?? $response->json('creditos');
+                $this->assertNotEmpty($rows, $url);
+                foreach ($rows as $row) {
+                    $this->assertSame($asesores[0]->id, $row['id_asesor'], $url);
+                }
+            }
+        }
+        $user->setRelation('role', new \App\Models\Role(['nombre' => 'admin']));
+        $response = $this->getJson('/api/cartera/activa')->assertOk();
+        $this->assertCount(2, array_unique(array_column($response->json('data'), 'id_asesor')));
+    }
+
+    public function test_unlinked_field_accounts_cannot_fall_back_to_all_portfolios(): void
+    {
+        foreach (['asesor', 'Gestor de Cobranza', 'Asesor Financiero'] as $rol) {
+            $user = new \App\Models\User();
+            $user->id = 999;
+            $user->setRelation('role', new \App\Models\Role(['nombre' => $rol]));
+            $this->actingAs($user, 'api');
+            foreach (['cartera/activa', 'cartera/activa?tipo=individual', 'cartera/activa?tipo=grupal',
+                'cartera/mora', 'cartera/mora-activa', 'cartera/mora-muerta', 'cartera/cerrados',
+                'cartera/cobros-del-dia', 'creditos', 'reportes/cartera'] as $endpoint) {
+                $this->getJson('/api/'.$endpoint.(str_contains($endpoint, '?') ? '&' : '?').'id_asesor=1')
+                    ->assertForbidden()->assertJsonPath('message', 'Tu usuario no tiene un gestor vinculado. Solicita a administración que lo asigne.');
+            }
+        }
+    }
+
     private function createSchema(): void
     {
         foreach (['movimientos_caja', 'recepciones_asesor', 'pagos', 'refinanciamientos', 'creditos', 'grupos', 'clientes', 'asesores'] as $table) {
@@ -534,7 +635,7 @@ class PagosAtrasadosReportTest extends TestCase
             $table->date('fecha_otorgacion'); $table->date('fecha_primer_pago')->nullable(); $table->integer('ciclo'); $table->integer('ciclo_inicio_mora')->nullable(); $table->integer('dias_mora_cache')->default(0); $table->decimal('monto_otorgado', 12, 2);
             $table->decimal('interes', 12, 2); $table->decimal('total', 12, 2); $table->decimal('saldo_pendiente', 12, 2)->nullable(); $table->integer('plazos');
             $table->decimal('valor_ficha', 12, 2); $table->string('dias_pago'); $table->string('tipo_credito'); $table->string('estado'); $table->timestamps();
-            $table->unsignedBigInteger('credito_padre_id')->nullable();
+            $table->unsignedBigInteger('credito_padre_id')->nullable(); $table->text('tabla_amortizacion')->nullable();
         });
         Schema::create('refinanciamientos', function (Blueprint $table) {
             $table->id(); $table->unsignedBigInteger('num_prog_anterior'); $table->unsignedBigInteger('num_prog_nuevo');

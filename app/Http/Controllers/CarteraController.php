@@ -230,7 +230,8 @@ class CarteraController extends Controller
     {
         $user = auth()->user();
         if ($user && RoleHelper::isFieldLike($user->role?->nombre)) {
-            return $user->id_asesor;
+            abort_unless((int) $user->id_asesor > 0, 403, 'Tu usuario no tiene un gestor vinculado. Solicita a administración que lo asigne.');
+            return (int) $user->id_asesor;
         }
         return $request->query('id_asesor') ? (int) $request->query('id_asesor') : null;
     }

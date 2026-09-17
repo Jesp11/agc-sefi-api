@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Credito;
 use App\Models\Pago;
+use App\Models\RecepcionAsesor;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -141,6 +142,12 @@ class CarteraService
 
         $montoCobrado = (float) $abonosDelDia->sum('monto');
         $montoMultas = (float) $pagosDelDia->where('tipo', 'Multa')->sum('monto');
+        $recepcion = $idAsesor
+            ? RecepcionAsesor::whereDate('fecha', $fechaRef->toDateString())
+                ->where('id_asesor', $idAsesor)
+                ->first()
+            : null;
+        $montoEntregadoCaja = round((float) ($recepcion?->monto_recibido ?? 0), 2);
 
         return [
             'fecha' => $fechaRef->toDateString(),
@@ -155,6 +162,11 @@ class CarteraService
                 'monto_a_cobrar'
             )), 2),
             'monto_cobrado' => round($montoCobrado, 2),
+            // El gestor sólo consulta su propio corte: no puede registrar ni
+            // modificar la recepción desde esta vista.
+            'entregado_caja' => $montoEntregadoCaja,
+            'recepcion_confirmada' => $recepcion !== null,
+            'pendiente_entrega_caja' => round(max(0, $montoCobrado - $montoEntregadoCaja), 2),
             'num_abonos' => $pagosDelDia->where('tipo', 'Abono')->count(),
             'monto_multas' => round($montoMultas, 2),
             // La vista diaria del gestor usa estos datos para mostrar sus

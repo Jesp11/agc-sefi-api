@@ -16,7 +16,8 @@ class ReporteController extends Controller
     {
         $user = auth()->user();
         if ($user && RoleHelper::isFieldLike($user->role?->nombre)) {
-            return $user->id_asesor;
+            abort_unless((int) $user->id_asesor > 0, 403, 'Tu usuario no tiene un gestor vinculado. Solicita a administración que lo asigne.');
+            return (int) $user->id_asesor;
         }
         return $request->query('id_asesor') ? (int) $request->query('id_asesor') : null;
     }
@@ -27,6 +28,16 @@ class ReporteController extends Controller
             $request->query('fecha'),
             $this->scopedAsesorId($request)
         ));
+    }
+
+    public function recibirAbono(\App\Models\Pago $pago)
+    {
+        try {
+            $this->reportService->recibirAbonoDiario($pago);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+        return response()->json(['message' => 'Abono recibido en caja']);
     }
 
     public function recibirAsesor(Request $request)
