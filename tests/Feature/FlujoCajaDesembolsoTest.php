@@ -19,7 +19,7 @@ class FlujoCajaDesembolsoTest extends TestCase
     {
         parent::setUp();
 
-        foreach (['confirmaciones_movimientos', 'movimientos_caja', 'movimientos_capital', 'gastos_operativos', 'creditos', 'clientes', 'asesores'] as $table) {
+        foreach (['confirmaciones_movimientos', 'movimientos_caja', 'movimientos_capital', 'gastos_operativos', 'ahorros_personal', 'ahorros_socio', 'creditos', 'clientes', 'asesores'] as $table) {
             Schema::dropIfExists($table);
         }
 
@@ -90,6 +90,18 @@ class FlujoCajaDesembolsoTest extends TestCase
             $table->decimal('monto', 14, 2);
             $table->string('referencia')->nullable();
             $table->date('fecha');
+            $table->timestamps();
+        });
+
+        Schema::create('ahorros_personal', function (Blueprint $table) {
+            $table->id();
+            $table->decimal('saldo', 14, 2)->default(0);
+            $table->timestamps();
+        });
+
+        Schema::create('ahorros_socio', function (Blueprint $table) {
+            $table->id();
+            $table->decimal('saldo', 14, 2)->default(0);
             $table->timestamps();
         });
     }
@@ -336,6 +348,85 @@ class FlujoCajaDesembolsoTest extends TestCase
         $this->assertSame(10000.0, (float) $saldoInicial->saldo_resultante);
         $this->assertSame(10500.0, (float) $ingreso->saldo_resultante);
         $this->assertSame(10300.0, (float) $egreso->saldo_resultante);
+    }
+
+    public function test_daily_summary_starts_from_the_previous_days_passive_capital(): void
+    {
+        MovimientoCaja::create([
+            'fecha' => '2026-09-02',
+            'motivo' => 'Cierre del día anterior',
+            'tipo' => 'Ingreso',
+            'monto' => 1000,
+            'saldo_resultante' => 1000,
+        ]);
+        MovimientoCaja::create([
+            'fecha' => '2026-09-03',
+            'motivo' => 'Ingreso del día',
+            'tipo' => 'Ingreso',
+            'monto' => 200,
+            'saldo_resultante' => 1200,
+        ]);
+        MovimientoCaja::create([
+            'fecha' => '2026-09-03',
+            'motivo' => 'Egreso del día',
+            'tipo' => 'Egreso',
+            'monto' => 50,
+            'saldo_resultante' => 1150,
+        ]);
+        MovimientoCaja::create([
+            'fecha' => '2026-09-04',
+            'motivo' => 'Movimiento posterior',
+            'tipo' => 'Ingreso',
+            'monto' => 300,
+            'saldo_resultante' => 1450,
+        ]);
+
+        $resumen = app(FlujoCajaService::class)->resumen(fecha: '2026-09-03');
+
+        $this->assertSame(1000.0, $resumen['saldo_inicial_mes']);
+        $this->assertSame(200.0, $resumen['total_ingresos']);
+        $this->assertSame(50.0, $resumen['total_egresos']);
+        $this->assertSame(1150.0, $resumen['disponible']);
+        $this->assertSame(1150.0, $resumen['saldo_actual']);
+    }
+
+    public function test_daily_summary_uses_an_explicit_initial_balance_instead_of_the_previous_day(): void
+    {
+        MovimientoCaja::create([
+            'fecha' => '2026-08-31',
+            'motivo' => 'Cierre de agosto',
+            'tipo' => 'Ingreso',
+            'monto' => 900,
+            'saldo_resultante' => 900,
+        ]);
+        MovimientoCaja::create([
+            'fecha' => '2026-09-01',
+            'motivo' => 'Saldo inicial de septiembre',
+            'tipo' => 'Ingreso',
+            'monto' => 1200,
+            'saldo_resultante' => 1200,
+            'categoria' => 'SaldoInicial',
+        ]);
+        MovimientoCaja::create([
+            'fecha' => '2026-09-01',
+            'motivo' => 'Ingreso del día',
+            'tipo' => 'Ingreso',
+            'monto' => 100,
+            'saldo_resultante' => 1300,
+        ]);
+        MovimientoCaja::create([
+            'fecha' => '2026-09-01',
+            'motivo' => 'Egreso del día',
+            'tipo' => 'Egreso',
+            'monto' => 50,
+            'saldo_resultante' => 1250,
+        ]);
+
+        $resumen = app(FlujoCajaService::class)->resumen(fecha: '2026-09-01');
+
+        $this->assertSame(900.0, $resumen['saldo_anterior']);
+        $this->assertSame(1200.0, $resumen['saldo_inicial_mes']);
+        $this->assertSame(1250.0, $resumen['disponible']);
     }
 
     public function test_initial_balance_must_be_unique_and_registered_on_the_first_day_of_the_month(): void

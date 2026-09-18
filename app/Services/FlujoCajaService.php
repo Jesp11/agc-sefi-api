@@ -643,19 +643,24 @@ class FlujoCajaService
     {
         $anio = $anio ?? (int) now()->year;
         $mes = $mes ?? (int) now()->month;
+        $fechaConsulta = $fecha ? Carbon::parse($fecha)->toDateString() : null;
 
         $movimientosMes = MovimientoCaja::query()
-            ->when($fecha, fn ($query) => $query->whereDate('fecha', $fecha), fn ($query) => $query->whereYear('fecha', $anio)->whereMonth('fecha', $mes))
+            ->when($fechaConsulta, fn ($query) => $query->whereDate('fecha', $fechaConsulta), fn ($query) => $query->whereYear('fecha', $anio)->whereMonth('fecha', $mes))
             ->get();
 
         $saldoInicialRow = $movimientosMes->where('categoria', 'SaldoInicial')->first();
 
-        $saldoAnterior = MovimientoCaja::where(function ($q) use ($anio, $mes) {
-            $q->whereYear('fecha', '<', $anio)
-                ->orWhere(function ($q2) use ($anio, $mes) {
-                    $q2->whereYear('fecha', $anio)->whereMonth('fecha', '<', $mes);
-                });
-        })
+        $saldoAnterior = MovimientoCaja::query()
+            ->when($fechaConsulta,
+                fn ($query) => $query->whereDate('fecha', '<', $fechaConsulta),
+                fn ($query) => $query->where(function ($q) use ($anio, $mes) {
+                    $q->whereYear('fecha', '<', $anio)
+                        ->orWhere(function ($q2) use ($anio, $mes) {
+                            $q2->whereYear('fecha', $anio)->whereMonth('fecha', '<', $mes);
+                        });
+                })
+            )
             ->orderByDesc('fecha')
             ->orderByDesc('id')
             ->value('saldo_resultante');
@@ -678,8 +683,11 @@ class FlujoCajaService
             ->where('categoria', '!=', 'SaldoInicial')
             ->sum('monto');
 
-        $ultimoDelMes = MovimientoCaja::whereYear('fecha', $anio)
-            ->whereMonth('fecha', $mes)
+        $ultimoDelPeriodo = MovimientoCaja::query()
+            ->when($fechaConsulta,
+                fn ($query) => $query->whereDate('fecha', $fechaConsulta),
+                fn ($query) => $query->whereYear('fecha', $anio)->whereMonth('fecha', $mes)
+            )
             ->orderByDesc('fecha')
             ->orderByDesc('id')
             ->first();
@@ -727,7 +735,7 @@ class FlujoCajaService
             'total_egresos' => round((float) $egresos, 2),
             'flujo_neto' => round((float) $ingresos - (float) $egresos, 2),
             'saldo_anterior' => round((float) ($saldoAnterior ?? 0), 2),
-            'saldo_actual' => round((float) ($ultimoDelMes?->saldo_resultante ?? $disponible), 2),
+            'saldo_actual' => round((float) ($ultimoDelPeriodo?->saldo_resultante ?? $disponible), 2),
             'disponible' => $disponible,
             'gastos_operativos' => round((float) $gastosOperativos, 2),
             'rendimientos_inversionistas' => round((float) $rendimientosInversionistas, 2),
