@@ -429,6 +429,67 @@ class FlujoCajaDesembolsoTest extends TestCase
         $this->assertSame(1250.0, $resumen['disponible']);
     }
 
+    public function test_after_day_one_the_opening_balance_is_the_previous_close_not_the_explicit_initial_balance(): void
+    {
+        MovimientoCaja::create([
+            'fecha' => '2026-09-01',
+            'motivo' => 'Saldo inicial de septiembre',
+            'tipo' => 'Ingreso',
+            'monto' => 1200,
+            'saldo_resultante' => 1200,
+            'categoria' => 'SaldoInicial',
+        ]);
+        MovimientoCaja::create([
+            'fecha' => '2026-09-01',
+            'motivo' => 'Ingreso del primer día',
+            'tipo' => 'Ingreso',
+            'monto' => 100,
+            'saldo_resultante' => 1300,
+        ]);
+        MovimientoCaja::create([
+            'fecha' => '2026-09-01',
+            'motivo' => 'Egreso del primer día',
+            'tipo' => 'Egreso',
+            'monto' => 50,
+            'saldo_resultante' => 1250,
+        ]);
+        MovimientoCaja::create([
+            'fecha' => '2026-09-02',
+            'motivo' => 'Ingreso del segundo día',
+            'tipo' => 'Ingreso',
+            'monto' => 80,
+            'saldo_resultante' => 1330,
+        ]);
+
+        $resumen = app(FlujoCajaService::class)->resumen(fecha: '2026-09-02');
+
+        $this->assertSame(1250.0, $resumen['saldo_inicial_mes']);
+        $this->assertSame(80.0, $resumen['total_ingresos']);
+        $this->assertSame(1330.0, $resumen['disponible']);
+    }
+
+    public function test_recalculation_applies_the_explicit_initial_balance_before_other_first_day_movements(): void
+    {
+        $ingreso = MovimientoCaja::create([
+            'fecha' => '2026-09-01',
+            'motivo' => 'Ingreso capturado antes del saldo inicial',
+            'tipo' => 'Ingreso',
+            'monto' => 100,
+        ]);
+        $saldoInicial = MovimientoCaja::create([
+            'fecha' => '2026-09-01',
+            'motivo' => 'Saldo inicial capturado después',
+            'tipo' => 'Ingreso',
+            'monto' => 1000,
+            'categoria' => 'SaldoInicial',
+        ]);
+
+        app(FlujoCajaService::class)->recalcularSaldosDesde('2026-09-01');
+
+        $this->assertSame(1000.0, (float) $saldoInicial->fresh()->saldo_resultante);
+        $this->assertSame(1100.0, (float) $ingreso->fresh()->saldo_resultante);
+    }
+
     public function test_initial_balance_must_be_unique_and_registered_on_the_first_day_of_the_month(): void
     {
         $flujoCaja = app(FlujoCajaService::class);

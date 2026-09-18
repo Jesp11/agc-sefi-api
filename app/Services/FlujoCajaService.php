@@ -566,6 +566,7 @@ class FlujoCajaService
 
         $pendientes = MovimientoCaja::where('fecha', '>=', $fechaInicio)
             ->orderBy('fecha')
+            ->orderByRaw("CASE WHEN categoria = 'SaldoInicial' THEN 0 ELSE 1 END")
             ->orderBy('id')
             ->get();
 
@@ -588,6 +589,43 @@ class FlujoCajaService
         }
 
         return $saldo - (float) $mov->monto;
+    }
+
+    /** Calcula el cierre previo usando como base el saldo inicial válido más reciente. */
+    private function saldoAntesDe(string $fechaLimite): float
+    {
+        $saldoInicial = MovimientoCaja::query()
+            ->whereDate('fecha', '<', $fechaLimite)
+            ->where('categoria', 'SaldoInicial')
+            ->whereDay('fecha', 1)
+            ->orderByDesc('fecha')
+            ->orderByDesc('id')
+            ->first();
+
+        if (! $saldoInicial) {
+            return (float) (MovimientoCaja::query()
+                ->whereDate('fecha', '<', $fechaLimite)
+                ->whereNotNull('saldo_resultante')
+                ->orderByDesc('fecha')
+                ->orderByDesc('id')
+                ->value('saldo_resultante') ?? 0);
+        }
+
+        $movimientos = MovimientoCaja::query()
+            ->whereDate('fecha', '>=', $saldoInicial->fecha->toDateString())
+            ->whereDate('fecha', '<', $fechaLimite)
+            ->where(function ($query) {
+                $query->whereNull('categoria')->orWhere('categoria', '!=', 'SaldoInicial');
+            })
+            ->get();
+
+        $base = $saldoInicial->tipo === 'Ingreso'
+            ? (float) $saldoInicial->monto
+            : -(float) $saldoInicial->monto;
+        $ingresos = (float) $movimientos->where('tipo', 'Ingreso')->sum('monto');
+        $egresos = (float) $movimientos->where('tipo', 'Egreso')->sum('monto');
+
+        return round($base + $ingresos - $egresos, 2);
     }
 
     /**
@@ -649,21 +687,14 @@ class FlujoCajaService
             ->when($fechaConsulta, fn ($query) => $query->whereDate('fecha', $fechaConsulta), fn ($query) => $query->whereYear('fecha', $anio)->whereMonth('fecha', $mes))
             ->get();
 
-        $saldoInicialRow = $movimientosMes->where('categoria', 'SaldoInicial')->first();
+        // Un saldo inicial explícito sólo puede establecer la base el día 1.
+        // En cualquier otro día se arrastra exclusivamente el cierre anterior.
+        $saldoInicialRow = $movimientosMes->first(
+            fn ($movimiento) => $movimiento->categoria === 'SaldoInicial' && $movimiento->fecha->day === 1
+        );
 
-        $saldoAnterior = MovimientoCaja::query()
-            ->when($fechaConsulta,
-                fn ($query) => $query->whereDate('fecha', '<', $fechaConsulta),
-                fn ($query) => $query->where(function ($q) use ($anio, $mes) {
-                    $q->whereYear('fecha', '<', $anio)
-                        ->orWhere(function ($q2) use ($anio, $mes) {
-                            $q2->whereYear('fecha', $anio)->whereMonth('fecha', '<', $mes);
-                        });
-                })
-            )
-            ->orderByDesc('fecha')
-            ->orderByDesc('id')
-            ->value('saldo_resultante');
+        $inicioPeriodo = $fechaConsulta ?? Carbon::create($anio, $mes, 1)->toDateString();
+        $saldoAnterior = $this->saldoAntesDe($inicioPeriodo);
 
         if ($saldoInicialRow) {
             $saldoInicialMes = $saldoInicialRow->tipo === 'Ingreso'
