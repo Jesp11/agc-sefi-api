@@ -160,6 +160,60 @@ class PagosRutaImportServiceTest extends TestCase
         $this->assertSame(100.0, (float) MovimientoCaja::where('pago_id', $pago->id)->value('monto'));
     }
 
+    public function test_full_receipt_allocates_cash_to_advance_payments_without_duplicates(): void
+    {
+        $creditoRuta = $this->credito();
+        $creditoAnticipado = Credito::create([
+            'id_cliente' => $creditoRuta->id_cliente,
+            'id_asesor' => $creditoRuta->id_asesor,
+            'fecha_otorgacion' => '2026-09-05',
+            'fecha_primer_pago' => '2026-09-12',
+            'ciclo' => 1,
+            'monto_otorgado' => 872,
+            'interes' => 0,
+            'total' => 872,
+            'saldo_pendiente' => 872,
+            'plazos' => 2,
+            'valor_ficha' => 436,
+            'dias_pago' => 'SABADO',
+            'tipo_credito' => 'Individual',
+            'estado' => 'Activo',
+        ]);
+        $pagoAnticipado = Pago::create([
+            'num_prog' => $creditoAnticipado->num_prog,
+            'monto' => 436,
+            'fecha' => '2026-09-05',
+            'hora' => '09:00:00',
+            'tipo' => 'Abono',
+            'metodo_pago' => 'Efectivo',
+        ]);
+        $pagoRuta = Pago::create([
+            'num_prog' => $creditoRuta->num_prog,
+            'monto' => 100,
+            'fecha' => '2026-09-05',
+            'hora' => '10:00:00',
+            'tipo' => 'Abono',
+            'metodo_pago' => 'Efectivo',
+        ]);
+        $reportes = app(ReportService::class);
+
+        // Aunque el anticipado se capturó antes, primero se asigna la ruta.
+        $reportes->registrarRecepcionAsesor('2026-09-05', $creditoRuta->id_asesor, 100);
+        $this->assertDatabaseHas('movimientos_caja', ['pago_id' => $pagoRuta->id, 'monto' => 100]);
+        $this->assertDatabaseMissing('movimientos_caja', ['pago_id' => $pagoAnticipado->id]);
+
+        $reportes->registrarRecepcionAsesor('2026-09-05', $creditoRuta->id_asesor, 436, agregar: true);
+
+        $this->assertDatabaseHas('movimientos_caja', ['pago_id' => $pagoAnticipado->id, 'monto' => 436]);
+        $this->assertSame(2, MovimientoCaja::count());
+        $this->assertSame(536.0, (float) MovimientoCaja::sum('monto'));
+        $this->assertDatabaseHas('recepciones_asesor', [
+            'id_asesor' => $creditoRuta->id_asesor,
+            'monto_recibido' => 536,
+            'monto_esperado' => 536,
+        ]);
+    }
+
     public function test_unreceived_and_received_payments_can_be_removed(): void
     {
         $credito = $this->credito();

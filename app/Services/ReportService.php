@@ -471,8 +471,11 @@ class ReportService
                 2
             );
 
-            // Sólo se lleva a caja lo que pertenece a la ruta, atrasados o
-            // mora. Un pago fuera de esas secciones no se presume entregado.
+            // Los pagos de ruta, atrasados y mora se asignan primero. Si
+            // Gerencia confirma un monto mayor, el remanente también debe
+            // asignarse a los anticipados del mismo gestor y fecha; de lo
+            // contrario el corte queda completo pero esos abonos aparecen
+            // erróneamente como pendientes de recibir.
             $cobros = app(CarteraService::class)->cobrosDelDia($fecha, $idAsesor);
             $foliosElegibles = collect($cobros['cobros'] ?? [])
                 ->pluck('num_prog')
@@ -480,15 +483,24 @@ class ReportService
                 ->filter()
                 ->unique()
                 ->values();
+            $foliosPrioritarios = $foliosElegibles
+                ->mapWithKeys(fn ($folio) => [(string) $folio => true]);
 
             $pagos = Pago::with(['credito.cliente', 'credito.grupo', 'movimientoCaja'])
                 ->whereDate('fecha', $fecha)
                 ->where('tipo', 'Abono')
-                ->where(fn ($q) => $q->whereIn('num_prog', $foliosElegibles)->orWhereHas('movimientoCaja'))
                 ->whereHas('credito', fn ($q) => $q->where('id_asesor', $idAsesor))
                 ->orderBy('hora')
                 ->orderBy('id')
-                ->get();
+                ->get()
+                ->sort(function (Pago $a, Pago $b) use ($foliosPrioritarios) {
+                    $ordenA = $foliosPrioritarios->has((string) $a->num_prog) ? 0 : 1;
+                    $ordenB = $foliosPrioritarios->has((string) $b->num_prog) ? 0 : 1;
+
+                    return [$ordenA, (string) $a->hora, (int) $a->id]
+                        <=> [$ordenB, (string) $b->hora, (int) $b->id];
+                })
+                ->values();
 
             $esperado = round((float) $pagos->sum('monto'), 2);
             $datosRecepcion = [
