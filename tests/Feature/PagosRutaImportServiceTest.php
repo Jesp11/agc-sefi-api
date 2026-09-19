@@ -246,6 +246,36 @@ class PagosRutaImportServiceTest extends TestCase
         $this->assertSame(200.0, (float) $credito->fresh()->saldo_pendiente);
     }
 
+    public function test_deleting_a_payment_reactivates_a_paid_off_credit_with_a_pending_balance(): void
+    {
+        $credito = $this->credito();
+        $credito->update([
+            'monto_otorgado' => 300,
+            'total' => 300,
+            'saldo_pendiente' => 300,
+            'plazos' => 3,
+        ]);
+        $service = app(PagoService::class);
+
+        $service->registrar($credito, [
+            'fecha' => '2026-09-05', 'hora' => '08:00:00', 'monto' => 100,
+        ]);
+        $service->registrar($credito, [
+            'fecha' => '2026-09-12', 'hora' => '08:00:00', 'monto' => 100,
+        ]);
+        $ultimo = $service->registrar($credito, [
+            'fecha' => '2026-09-19', 'hora' => '08:00:00', 'monto' => 100,
+        ])['pago'];
+
+        $this->assertSame('Finalizado', $credito->fresh()->estado);
+        $this->assertSame(0.0, (float) $credito->fresh()->saldo_pendiente);
+
+        $service->eliminarAbono($credito, $ultimo);
+
+        $this->assertSame('Activo', $credito->fresh()->estado);
+        $this->assertSame(100.0, (float) $credito->fresh()->saldo_pendiente);
+    }
+
     #[\PHPUnit\Framework\Attributes\DataProvider('receivedAmounts')]
     public function test_deleting_a_received_payment_adjusts_the_cut_and_preserves_other_income(float $recibido): void
     {

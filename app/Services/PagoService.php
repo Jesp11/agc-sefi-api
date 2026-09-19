@@ -109,11 +109,21 @@ class PagoService
         });
     }
 
-    private function syncCredito(Credito $credito): void
+    private function syncCredito(Credito $credito, bool $reactivarFinalizadoConSaldo = false): void
     {
         $credito->refresh();
         $credito->load('pagos', 'cliente', 'grupo');
         $this->moraService->syncCreditoState($credito);
+
+        $credito->refresh();
+        if (
+            $reactivarFinalizadoConSaldo
+            && $credito->estado === 'Finalizado'
+            && (float) $credito->saldo_pendiente > 0.009
+            && ! $credito->refinanciamientosComoAnterior()->exists()
+        ) {
+            $credito->update(['estado' => 'Activo']);
+        }
     }
 
     /** Impide que un integrante pague más de su propio documento o del saldo grupal. */
@@ -239,7 +249,7 @@ class PagoService
             }
 
             $pago->delete();
-            $this->syncCredito($credito);
+            $this->syncCredito($credito, reactivarFinalizadoConSaldo: true);
         });
     }
 
