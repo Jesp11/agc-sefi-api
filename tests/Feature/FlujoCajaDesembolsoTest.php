@@ -321,6 +321,34 @@ class FlujoCajaDesembolsoTest extends TestCase
         ]);
     }
 
+    public function test_correcting_a_disbursement_date_moves_its_confirmation_and_recalculates_balances(): void
+    {
+        $flujoCaja = app(FlujoCajaService::class);
+        $saldoInicial = $flujoCaja->registrar([
+            'fecha' => '2026-09-01', 'motivo' => 'Saldo inicial', 'tipo' => 'Ingreso',
+            'monto' => 10000, 'categoria' => 'SaldoInicial', 'cuenta' => 'Efectivo',
+        ]);
+        $confirmacion = $flujoCaja->solicitarConfirmacionEgreso([
+            'fecha' => '2026-09-14', 'motivo' => 'RENOVACIÓN A 16 SEMANAS', 'tipo' => 'Egreso',
+            'monto' => 8302, 'categoria' => 'Renovacion', 'cuenta' => 'Efectivo',
+            'referencia' => 'DESEMBOLSO-99',
+        ]);
+        $confirmada = $flujoCaja->confirmarEgresoPendiente($confirmacion);
+        $ingresoIntermedio = $flujoCaja->registrar([
+            'fecha' => '2026-09-14', 'motivo' => 'Ingreso del día', 'tipo' => 'Ingreso',
+            'monto' => 500, 'categoria' => 'OtroIngreso', 'cuenta' => 'Efectivo',
+        ]);
+        $movimiento = MovimientoCaja::findOrFail($confirmada->movimiento_caja_id);
+
+        $corregido = $flujoCaja->corregirFechaDesembolso($movimiento, '2026-09-15');
+
+        $this->assertSame('2026-09-15', $corregido->fecha->toDateString());
+        $this->assertSame('2026-09-15', $confirmacion->fresh()->fecha->toDateString());
+        $this->assertSame(10500.0, (float) $ingresoIntermedio->fresh()->saldo_resultante);
+        $this->assertSame(2198.0, (float) $corregido->fresh()->saldo_resultante);
+        $this->assertSame(10000.0, (float) $saldoInicial->fresh()->saldo_resultante);
+    }
+
     public function test_initial_balance_is_the_month_base_and_later_movements_do_not_replace_it(): void
     {
         $flujoCaja = app(FlujoCajaService::class);

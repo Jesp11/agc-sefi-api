@@ -163,6 +163,8 @@ Route::middleware('auth:api')->group(function () {
         ->middleware('role:admin');
     Route::post('flujo-caja', [FlujoCajaController::class, 'store']);
     Route::put('flujo-caja/{movimiento}', [FlujoCajaController::class, 'update']);
+    Route::patch('flujo-caja/{movimiento}/fecha-desembolso', [FlujoCajaController::class, 'corregirFechaDesembolso'])
+        ->middleware('role:admin');
     Route::delete('flujo-caja/{movimiento}', [FlujoCajaController::class, 'destroy']);
     Route::get('empleados/export', [EmpleadoController::class, 'export']);
     Route::post('empleados/import', [EmpleadoController::class, 'import']);

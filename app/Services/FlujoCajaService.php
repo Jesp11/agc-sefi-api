@@ -293,6 +293,33 @@ class FlujoCajaService
         });
     }
 
+    /** Corrige únicamente la fecha contable de un desembolso automático confirmado. */
+    public function corregirFechaDesembolso(MovimientoCaja $movimiento, string $fecha): MovimientoCaja
+    {
+        if (! str_starts_with((string) $movimiento->referencia, 'DESEMBOLSO-')) {
+            throw new \InvalidArgumentException('Solo se puede corregir por esta vía la fecha de un desembolso automático.');
+        }
+
+        return DB::transaction(function () use ($movimiento, $fecha) {
+            $movimiento = MovimientoCaja::whereKey($movimiento->id)->lockForUpdate()->firstOrFail();
+            $fechaAnterior = $movimiento->fecha->toDateString();
+            $fechaNueva = Carbon::parse($fecha)->toDateString();
+
+            $movimiento->update(['fecha' => $fechaNueva]);
+
+            ConfirmacionMovimiento::query()
+                ->where(function ($query) use ($movimiento) {
+                    $query->where('movimiento_caja_id', $movimiento->id)
+                        ->orWhere('referencia', $movimiento->referencia);
+                })
+                ->update(['fecha' => $fechaNueva]);
+
+            $this->recalcularSaldosDesde(min($fechaAnterior, $fechaNueva));
+
+            return $movimiento->fresh(['asesor', 'credito.cliente', 'credito.grupo']);
+        });
+    }
+
     /** Elimina un movimiento manual o importado y recalcula los saldos posteriores. */
     public function eliminar(MovimientoCaja $movimiento): void
     {
