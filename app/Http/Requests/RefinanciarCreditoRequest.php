@@ -2,10 +2,19 @@
 
 namespace App\Http\Requests;
 
+use App\Support\DiaPago;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class RefinanciarCreditoRequest extends FormRequest
 {
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('dias_pago') && $this->input('dias_pago') !== null) {
+            $this->merge(['dias_pago' => DiaPago::normalizar($this->input('dias_pago'))]);
+        }
+    }
+
     public function authorize(): bool
     {
         return true;
@@ -23,7 +32,7 @@ class RefinanciarCreditoRequest extends FormRequest
             'total' => 'required|numeric|min:0.01',
             'interes' => 'nullable|numeric|min:0',
             'porcentaje_interes' => 'nullable|numeric|min:0|max:100',
-            'dias_pago' => 'nullable|string|max:20',
+            'dias_pago' => ['nullable', 'string', Rule::in(DiaPago::HABILES)],
             'tasa_asignada' => 'nullable|string|max:50',
             'comision_apertura' => 'nullable|numeric|min:0',
             'intereses_arrastrados' => 'nullable|numeric|min:0',

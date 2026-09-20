@@ -2,11 +2,20 @@
 
 namespace App\Http\Requests;
 
+use App\Support\DiaPago;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class StoreCreditoRequest extends FormRequest
 {
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('dias_pago')) {
+            $this->merge(['dias_pago' => DiaPago::normalizar($this->input('dias_pago'))]);
+        }
+    }
+
     /**
      * Determine if the user is authorized to make this request.
      */
@@ -18,7 +27,7 @@ class StoreCreditoRequest extends FormRequest
     /**
      * Get the validation rules that apply to the request.
      *
-     * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
+     * @return array<string, ValidationRule|array<mixed>|string>
      */
     public function rules(): array
     {
@@ -32,7 +41,7 @@ class StoreCreditoRequest extends FormRequest
             'total' => 'required|numeric|min:0',
             'plazos' => 'required|integer|min:1',
             'valor_ficha' => 'required|numeric|min:0',
-            'dias_pago' => 'required|string|max:255',
+            'dias_pago' => ['required', 'string', Rule::in(DiaPago::HABILES)],
             'es_personalizado' => 'nullable|boolean',
             'es_adicional' => 'nullable|boolean',
             'comision_apertura' => 'nullable|numeric|min:0',

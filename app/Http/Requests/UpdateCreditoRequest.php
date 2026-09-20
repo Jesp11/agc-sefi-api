@@ -2,11 +2,20 @@
 
 namespace App\Http\Requests;
 
+use App\Support\DiaPago;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class UpdateCreditoRequest extends FormRequest
 {
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('dias_pago')) {
+            $this->merge(['dias_pago' => DiaPago::normalizar($this->input('dias_pago'))]);
+        }
+    }
+
     /**
      * Determine if the user is authorized to make this request.
      */
@@ -18,7 +27,7 @@ class UpdateCreditoRequest extends FormRequest
     /**
      * Get the validation rules that apply to the request.
      *
-     * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
+     * @return array<string, ValidationRule|array<mixed>|string>
      */
     public function rules(): array
     {
@@ -39,7 +48,7 @@ class UpdateCreditoRequest extends FormRequest
             'abonos_historicos' => 'sometimes|nullable|numeric|min:0',
             'plazos' => 'sometimes|integer|min:1',
             'valor_ficha' => 'sometimes|numeric|min:0',
-            'dias_pago' => 'sometimes|string|max:255',
+            'dias_pago' => ['sometimes', 'string', Rule::in(DiaPago::HABILES)],
             'comision_apertura' => 'sometimes|nullable|numeric|min:0',
             'tasa_asignada' => 'sometimes|nullable|string|max:50',
             'porcentaje_interes' => 'sometimes|nullable|numeric|min:0',

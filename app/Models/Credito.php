@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Support\DiaPago;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
@@ -10,6 +12,7 @@ class Credito extends Model
     use HasFactory;
 
     protected $table = 'creditos';
+
     protected $primaryKey = 'num_prog';
 
     protected $fillable = [
@@ -56,6 +59,14 @@ class Credito extends Model
         'abonos_historicos' => 'decimal:2',
         'abono_recuperacion' => 'decimal:2',
     ];
+
+    /** Garantiza el mismo formato incluso en importaciones y procesos internos. */
+    protected function diasPago(): Attribute
+    {
+        return Attribute::make(
+            set: fn ($value) => DiaPago::normalizar($value),
+        );
+    }
 
     public function cliente()
     {
