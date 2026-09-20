@@ -41,21 +41,21 @@ class CarteraService
         $query = Credito::with(['cliente', 'grupo', 'asesor', 'pagos'])
             ->where(function ($q) use ($fechaRef) {
                 $q->where('estado', 'Activo')
-                    ->orWhere(function ($sub) use ($fechaRef) {
-                        $sub->where('estado', 'Finalizado')
-                            ->where(function ($historical) use ($fechaRef) {
-                                // Un crédito renovado conserva su ruta únicamente antes de la
-                                // fecha efectiva. En esa fecha y posteriores lo reemplaza el nuevo.
-                                $historical->whereHas('refinanciamientosComoAnterior', function ($rq) use ($fechaRef) {
-                                    $rq->whereDate('fecha_efectiva', '>', $fechaRef->toDateString());
-                                })->orWhere(function ($legacy) use ($fechaRef) {
-                                    $legacy->whereDoesntHave('refinanciamientosComoAnterior')
-                                        ->whereHas('pagos', function ($pq) use ($fechaRef) {
-                                            $pq->whereDate('fecha', '>=', $fechaRef->toDateString());
-                                        });
-                                });
-                            });
-                    });
+                  ->orWhere(function ($sub) use ($fechaRef) {
+                      $sub->where('estado', 'Finalizado')
+                          ->where(function ($historical) use ($fechaRef) {
+                              // Un crédito renovado conserva su ruta únicamente antes de la
+                              // fecha efectiva. En esa fecha y posteriores lo reemplaza el nuevo.
+                              $historical->whereHas('refinanciamientosComoAnterior', function ($rq) use ($fechaRef) {
+                                  $rq->whereDate('fecha_efectiva', '>', $fechaRef->toDateString());
+                              })->orWhere(function ($legacy) use ($fechaRef) {
+                                  $legacy->whereDoesntHave('refinanciamientosComoAnterior')
+                                      ->whereHas('pagos', function ($pq) use ($fechaRef) {
+                                          $pq->whereDate('fecha', '>=', $fechaRef->toDateString());
+                                      });
+                              });
+                          });
+                  });
             });
 
         if ($idAsesor) {
@@ -104,7 +104,6 @@ class CarteraService
             if ($cmp !== 0) {
                 return $cmp;
             }
-
             return ($b['dias_atraso'] ?? 0) <=> ($a['dias_atraso'] ?? 0);
         });
 
@@ -189,7 +188,7 @@ class CarteraService
 
     private function buildCobroItem(Credito $credito, Carbon $fechaRef, string $diaSemana): ?array
     {
-        if (! in_array($credito->estado, ['Activo', 'Finalizado'], true)) {
+        if (!in_array($credito->estado, ['Activo', 'Finalizado'], true)) {
             return null;
         }
 
@@ -211,7 +210,6 @@ class CarteraService
 
             if ($restanteAbonado >= $monto - 0.01) {
                 $restanteAbonado -= $monto;
-
                 continue;
             }
 
@@ -241,7 +239,7 @@ class CarteraService
         $esDiaPago = $diaPago === $diaSemana;
         // Del día: clientes cuyo día asignado es hoy.
         // Atrasados: clientes de otros días que deben cuotas pasadas.
-        if (! $tieneAtrasadas && ! $esDiaPago) {
+        if (!$tieneAtrasadas && !$esDiaPago) {
             return null;
         }
 
@@ -363,7 +361,7 @@ class CarteraService
 
     public function enviarAMora(Credito $credito): Credito
     {
-        if (! in_array($credito->estado, ['Activo', 'EnMora'], true)) {
+        if (!in_array($credito->estado, ['Activo', 'EnMora'], true)) {
             throw new InvalidArgumentException('Solo se pueden enviar a mora créditos activos.');
         }
 
@@ -431,7 +429,7 @@ class CarteraService
 
     public function reactivar(Credito $credito): Credito
     {
-        if (! in_array($credito->estado, ['CerradoSinRenovacion', 'Finalizado'], true)) {
+        if (!in_array($credito->estado, ['CerradoSinRenovacion', 'Finalizado'], true)) {
             throw new InvalidArgumentException('Solo se pueden reactivar créditos cerrados.');
         }
 

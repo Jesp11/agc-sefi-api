@@ -11,7 +11,7 @@ class UpdateCreditoRequest extends FormRequest
 {
     protected function prepareForValidation(): void
     {
-        if ($this->has('dias_pago')) {
+        if (is_string($this->input('dias_pago'))) {
             $this->merge(['dias_pago' => DiaPago::normalizar($this->input('dias_pago'))]);
         }
     }
