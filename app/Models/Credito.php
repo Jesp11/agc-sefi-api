@@ -12,6 +12,7 @@ class Credito extends Model
     use HasFactory;
 
     protected $table = 'creditos';
+
     protected $primaryKey = 'num_prog';
 
     protected $fillable = [
