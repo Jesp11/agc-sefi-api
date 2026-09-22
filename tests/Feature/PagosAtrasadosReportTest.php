@@ -196,7 +196,7 @@ class PagosAtrasadosReportTest extends TestCase
         $this->assertTrue($asesor['creditos_mora'][0]['pagado_hoy']);
     }
 
-    public function test_daily_report_keeps_a_client_credit_balance_out_of_another_clients_pending_installment(): void
+    public function test_daily_report_treats_an_amount_below_the_next_full_installment_as_extra(): void
     {
         $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
         $clienteQuePaga = $this->cliente('CLI-001', 'Cliente con saldo a favor');
@@ -218,11 +218,48 @@ class PagosAtrasadosReportTest extends TestCase
         $asesor = collect($reporte['por_asesor'])->firstWhere('id_asesor', $advisor->id);
         $pagoReportado = collect($reporte['pagos'])->firstWhere('id', $pago->id);
 
-        $this->assertSame(10.0, $reporte['saldo_favor_clientes']);
         $this->assertSame(600.0, $reporte['total_pendiente_cobro']);
-        $this->assertSame(10.0, $asesor['saldo_favor_clientes']);
         $this->assertSame(600.0, $asesor['monto_pendiente_cobro']);
-        $this->assertSame(10.0, (float) $pagoReportado->saldo_favor_cliente);
+        $this->assertSame(0.0, (float) $pagoReportado->monto_adelantado_hoy);
+        $this->assertSame(10.0, (float) $pagoReportado->monto_extra_hoy);
+    }
+
+    public function test_daily_report_applies_a_scheduled_payment_to_todays_route_before_arrears(): void
+    {
+        $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
+        $cliente = $this->cliente('CLI-001', 'Cliente con cuota atrasada');
+        $credito = $this->credito($advisor, $cliente, 'Activo', '2026-09-05', 3);
+        $pago = Pago::create([
+            'num_prog' => $credito->num_prog,
+            'monto' => 100,
+            'fecha' => '2026-09-12',
+            'hora' => '09:00:00',
+            'tipo' => 'Abono',
+        ]);
+
+        $reporte = app(ReportService::class)->reporteDiario('2026-09-12');
+        $asesor = collect($reporte['por_asesor'])->firstWhere('id_asesor', $advisor->id);
+        $pagoReportado = collect($reporte['pagos'])->firstWhere('id', $pago->id);
+
+        $this->assertSame(100.0, $reporte['total_programado_dia']);
+        $this->assertSame(0.0, $reporte['total_pendiente_cobro']);
+        $this->assertSame(0.0, $asesor['monto_pendiente_cobro']);
+        $this->assertSame(0.0, (float) $pagoReportado->monto_atrasado_hoy);
+        $this->assertSame(100.0, (float) $pagoReportado->monto_del_dia_hoy);
+    }
+
+    public function test_credit_balance_in_favor_is_calculated_independently_per_credit(): void
+    {
+        $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
+        $cliente = $this->cliente('CLI-001', 'Cliente con varios créditos');
+        $creditoConSaldo = $this->credito($advisor, $cliente, 'Activo', '2026-09-05', 4);
+        $creditoSinSaldo = $this->credito($advisor, $cliente, 'Activo', '2026-09-05', 4);
+
+        Pago::create(['num_prog' => $creditoConSaldo->num_prog, 'monto' => 250, 'fecha' => '2026-09-05', 'tipo' => 'Abono']);
+        Pago::create(['num_prog' => $creditoSinSaldo->num_prog, 'monto' => 100, 'fecha' => '2026-09-05', 'tipo' => 'Abono']);
+
+        $this->assertSame(50.0, app(CarteraService::class)->saldoFavorCredito($creditoConSaldo));
+        $this->assertSame(0.0, app(CarteraService::class)->saldoFavorCredito($creditoSinSaldo));
     }
 
     public function test_daily_report_exposes_actual_received_and_pending_amounts_per_payment(): void
@@ -426,8 +463,9 @@ class PagosAtrasadosReportTest extends TestCase
 
         $reporte = app(CarteraService::class)->cobrosDelDia('2026-08-14', $advisor->id);
         $this->assertSame([$mixto->id, $final->id], $reporte['pagos']->pluck('id')->all());
-        $this->assertSame([50.0, 150.0], $reporte['pagos_anticipados']->pluck('monto_adelantado_hoy')->all());
-        $this->assertSame(200.0, $reporte['monto_anticipado']);
+        $this->assertSame([$final->id], $reporte['pagos_anticipados']->pluck('id')->all());
+        $this->assertSame([50.0, 50.0], $reporte['pagos']->pluck('monto_extra_hoy')->all());
+        $this->assertSame(100.0, $reporte['monto_anticipado']);
         $this->assertSame(300.0, $reporte['monto_cobrado']);
         $this->assertSame(150.0, (float) $reporte['pagos']->first()->monto);
     }

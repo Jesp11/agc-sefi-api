@@ -139,6 +139,7 @@ class CarteraService
                 : $this->clasificarAbonosDelDia($credito, $fechaRef, $historialAbonos->get($folio, collect()));
             foreach ($pagos as $pago) {
                 $pago->setAttribute('monto_adelantado_hoy', (float) ($clasificaciones[$pago->id]['adelantado'] ?? 0));
+                $pago->setAttribute('monto_extra_hoy', (float) ($clasificaciones[$pago->id]['extra'] ?? 0));
                 $pago->setAttribute('num_pago', (int) ($numerosPago->get("pago_{$pago->id}") ?? 0));
                 $pago->setAttribute('total_pagos', (int) ($credito->plazos ?? 0));
             }
@@ -297,11 +298,13 @@ class CarteraService
     }
 
     /**
-     * Distribuye los abonos de una fecha entre cuotas vencidas, del día y
-     * futuras. Así un segundo o tercer pago no se etiqueta como atrasado una
-     * vez que las cuotas vencidas ya quedaron cubiertas.
+     * Distribuye los abonos de una fecha entre la cuota del día, cuotas
+     * vencidas y cuotas futuras. Si el crédito está programado en la fecha,
+     * la cuota de ruta tiene prioridad; cualquier excedente cubre atrasos y
+     * después adelanta cuotas. Fuera del día programado se cubren primero los
+     * atrasos.
      *
-     * @return array<int, array{atrasado: float, del_dia: float, adelantado: float}>
+     * @return array<int, array{atrasado: float, del_dia: float, adelantado: float, extra: float}>
      */
     public function clasificarAbonosDelDia(Credito $credito, Carbon|string $fecha, $pagosCredito = null): array
     {
@@ -327,17 +330,49 @@ class CarteraService
         }
         unset($cuota);
 
+        $esDiaRuta = DiaPago::normalizar($credito->dias_pago) === self::DIAS_SEMANA[$fechaRef->dayOfWeek];
+        $indicesCuotasHoy = array_keys($cuotas);
+        usort($indicesCuotasHoy, function (int $indiceA, int $indiceB) use ($cuotas, $fechaRef, $esDiaRuta) {
+            $fechaA = $cuotas[$indiceA]['fecha'];
+            $fechaB = $cuotas[$indiceB]['fecha'];
+            $prioridad = function (Carbon $fechaCuota) use ($fechaRef, $esDiaRuta) {
+                if ($esDiaRuta && $fechaCuota->isSameDay($fechaRef)) {
+                    return 0;
+                }
+
+                if ($fechaCuota->lt($fechaRef)) {
+                    return $esDiaRuta ? 1 : 0;
+                }
+
+                return $esDiaRuta ? 2 : 1;
+            };
+
+            return [$prioridad($fechaA), $fechaA->timestamp]
+                <=> [$prioridad($fechaB), $fechaB->timestamp];
+        });
+
         $resultado = [];
         foreach ($pagos
             ->filter(fn (Pago $pago) => $pago->fecha && Carbon::parse($pago->fecha)->isSameDay($fechaRef))
             ->sortBy([['hora', 'asc'], ['id', 'asc']]) as $pago) {
-            $detalle = ['atrasado' => 0.0, 'del_dia' => 0.0, 'adelantado' => 0.0];
+            $detalle = ['atrasado' => 0.0, 'del_dia' => 0.0, 'adelantado' => 0.0, 'extra' => 0.0];
             $restante = (float) $pago->monto;
 
-            foreach ($cuotas as &$cuota) {
+            foreach ($indicesCuotasHoy as $indiceCuota) {
+                $cuota = &$cuotas[$indiceCuota];
                 if ($restante <= 0.009 || $cuota['saldo'] <= 0.009) {
+                    unset($cuota);
                     continue;
                 }
+
+                // Una cuota futura sólo se considera anticipada cuando el
+                // importe disponible alcanza para completarla. El remanente
+                // menor a una cuota se conserva como extra informativo.
+                if ($cuota['fecha']->gt($fechaRef) && $restante < $cuota['saldo'] - 0.009) {
+                    unset($cuota);
+                    break;
+                }
+
                 $aplicado = min($restante, $cuota['saldo']);
                 $tipo = $cuota['fecha']->lt($fechaRef)
                     ? 'atrasado'
@@ -345,18 +380,40 @@ class CarteraService
                 $detalle[$tipo] = round($detalle[$tipo] + $aplicado, 2);
                 $cuota['saldo'] = round($cuota['saldo'] - $aplicado, 2);
                 $restante = round($restante - $aplicado, 2);
+                unset($cuota);
             }
-            unset($cuota);
 
-            // Un importe que excede el calendario también permanece a favor
-            // del cliente y se reporta como pago adelantado.
-            if ($restante > 0.009) {
-                $detalle['adelantado'] = round($detalle['adelantado'] + $restante, 2);
-            }
+            $detalle['extra'] = round(max(0, $restante), 2);
+
             $resultado[(int) $pago->id] = $detalle;
         }
 
         return $resultado;
+    }
+
+    /**
+     * Remanente acumulado de los abonos que todavía no completa otra cuota
+     * del crédito. No incluye multas ni ahorro personal.
+     */
+    public function saldoFavorCredito(Credito $credito): float
+    {
+        $credito->loadMissing('pagos');
+        $disponible = max(
+            0,
+            (float) ($credito->abonos_historicos ?? 0)
+                + (float) $credito->pagos->where('tipo', 'Abono')->sum('monto')
+        );
+
+        foreach ($this->moraService->generateSchedule($credito) as $cuota) {
+            $montoCuota = round((float) ($cuota['pago'] ?? 0), 2);
+            if ($montoCuota <= 0.009 || $disponible < $montoCuota - 0.009) {
+                break;
+            }
+
+            $disponible = round($disponible - $montoCuota, 2);
+        }
+
+        return round(max(0, $disponible), 2);
     }
 
     public function enviarAMora(Credito $credito): Credito

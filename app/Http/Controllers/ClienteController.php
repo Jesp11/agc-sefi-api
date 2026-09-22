@@ -8,12 +8,16 @@ use App\Support\RoleHelper;
 use App\Http\Requests\StoreClienteRequest;
 use App\Http\Requests\UpdateClienteRequest;
 use App\Services\ClienteService;
+use App\Services\CarteraService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
 class ClienteController extends Controller
 {
-    public function __construct(private ClienteService $clienteService) {}
+    public function __construct(
+        private ClienteService $clienteService,
+        private CarteraService $carteraService,
+    ) {}
 
     public function index(Request $request)
     {
@@ -158,7 +162,11 @@ class ClienteController extends Controller
 
     public function show($id)
     {
-        $cliente = Cliente::with(['creditos.asesor', 'referencias', 'avales', 'grupos', 'asesor'])->findOrFail($id);
+        $cliente = Cliente::with(['creditos.asesor', 'creditos.pagos', 'referencias', 'avales', 'grupos', 'asesor'])->findOrFail($id);
+        $cliente->creditos->each(function (Credito $credito) {
+            $credito->setAttribute('saldo_favor_credito', $this->carteraService->saldoFavorCredito($credito));
+        });
+
         return response()->json($cliente);
     }
 
@@ -192,7 +200,11 @@ class ClienteController extends Controller
             'message' => $creditosActualizados > 0
                 ? "Cliente actualizado. {$creditosActualizados} crédito(s) activo(s) reasignado(s) al nuevo empleado/gestor."
                 : 'Cliente actualizado exitosamente',
-            'data' => $cliente->load(['grupos', 'asesor', 'creditos.asesor']),
+            'data' => tap($cliente->load(['grupos', 'asesor', 'creditos.asesor', 'creditos.pagos']), function (Cliente $cliente) {
+                $cliente->creditos->each(function (Credito $credito) {
+                    $credito->setAttribute('saldo_favor_credito', $this->carteraService->saldoFavorCredito($credito));
+                });
+            }),
             'creditos_reasignados' => $creditosActualizados,
         ]);
     }

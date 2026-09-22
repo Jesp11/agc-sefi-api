@@ -130,41 +130,11 @@ class ReportService
             ))
             ->values();
 
-        // Un excedente en un abono pertenece al saldo a favor del mismo
-        // cliente. No debe disminuir la cuota programada de otro cliente de
-        // la ruta. Se lleva el saldo restante por folio y se expone el
-        // excedente en cada pago para que el corte lo pueda mostrar.
+        // El pendiente de ruta se lleva por folio para que un abono no
+        // disminuya la cuota programada de otro cliente.
         $rutasDelDia = $cobrosProgramados
             ->where('categoria', 'del_dia')
             ->keyBy(fn (array $cobro) => (string) $cobro['num_prog']);
-        $pendienteRutaPorFolio = $rutasDelDia->mapWithKeys(
-            fn (array $cobro, string $folio) => [$folio => round((float) ($cobro['monto_a_cobrar'] ?? 0), 2)]
-        )->all();
-        $saldoFavorPorAsesor = [];
-
-        $pagos->where('tipo', 'Abono')
-            ->sortBy([['hora', 'asc'], ['id', 'asc']])
-            ->each(function (Pago $pago) use (&$pendienteRutaPorFolio, &$saldoFavorPorAsesor) {
-                $folio = (string) $pago->num_prog;
-                if (!array_key_exists($folio, $pendienteRutaPorFolio)) {
-                    return;
-                }
-
-                $monto = (float) $pago->monto;
-                $aplicadoALaCuota = min($monto, $pendienteRutaPorFolio[$folio]);
-                $saldoFavor = round(max(0, $monto - $aplicadoALaCuota), 2);
-                $pendienteRutaPorFolio[$folio] = round(
-                    max(0, $pendienteRutaPorFolio[$folio] - $aplicadoALaCuota),
-                    2
-                );
-                $pago->setAttribute('saldo_favor_cliente', $saldoFavor);
-
-                $idAsesor = (int) ($pago->credito?->id_asesor ?? 0);
-                $saldoFavorPorAsesor[$idAsesor] = round(
-                    ($saldoFavorPorAsesor[$idAsesor] ?? 0) + $saldoFavor,
-                    2
-                );
-            });
 
         // Clasifica cada abono, en orden de captura, contra el calendario de
         // su propio crédito. Un pago posterior a liquidar los atrasos queda
@@ -205,8 +175,24 @@ class ReportService
                     $pago->setAttribute('monto_atrasado_hoy', (float) ($detalle['atrasado'] ?? 0));
                     $pago->setAttribute('monto_del_dia_hoy', (float) ($detalle['del_dia'] ?? 0));
                     $pago->setAttribute('monto_adelantado_hoy', (float) ($detalle['adelantado'] ?? 0));
+                    $pago->setAttribute('monto_extra_hoy', (float) ($detalle['extra'] ?? 0));
                 }
             });
+
+        // El pendiente de la ruta se reduce solamente con la porción del
+        // abono aplicada a la cuota de hoy. Los importes destinados a atrasos
+        // o cuotas futuras se muestran en sus propias secciones y no deben
+        // hacer parecer liquidada la cuota actual.
+        $pagosAbonoPorFolio = $pagos->where('tipo', 'Abono')->groupBy(
+            fn (Pago $pago) => (string) $pago->num_prog
+        );
+        $pendienteRutaPorFolio = $rutasDelDia->mapWithKeys(function (array $cobro, string $folio) use ($pagosAbonoPorFolio) {
+            $abonadoHoy = (float) $pagosAbonoPorFolio
+                ->get($folio, collect())
+                ->sum(fn (Pago $pago) => (float) ($pago->monto_del_dia_hoy ?? 0));
+
+            return [$folio => round(max(0, (float) ($cobro['monto_a_cobrar'] ?? 0) - $abonadoHoy), 2)];
+        })->all();
 
         $pagosAnticipados = $pagos->where('tipo', 'Abono')
             ->filter(fn (Pago $pago) => (float) ($pago->monto_adelantado_hoy ?? 0) > 0.009)
@@ -251,7 +237,6 @@ class ReportService
             'total_programado_dia' => round((float) $cobrosProgramados->where('categoria', 'del_dia')->sum('monto_a_cobrar'), 2),
             'total_atrasado' => round((float) $cobrosProgramados->where('categoria', 'atrasado')->sum('monto_a_cobrar'), 2),
             'total_exigible' => round((float) $cobrosProgramados->sum('monto_a_cobrar'), 2),
-            'saldo_favor_clientes' => round((float) array_sum($saldoFavorPorAsesor), 2),
             'total_pendiente_cobro' => round((float) array_sum($pendienteRutaPorFolio), 2),
             'pagos_anticipados' => $pagosAnticipados,
             'creditos_otorgados' => $creditos->count(),
@@ -326,7 +311,6 @@ class ReportService
                     'monto_programado' => $progDelDia,
                     'monto_exigible' => $progDelDia,
                     'a_recibir_bruto' => $aRecibirBruto,
-                    'saldo_favor_clientes' => $saldoFavorPorAsesor[(int) $aid] ?? 0,
                     'comisiones_renovacion' => $comisionesRenovacion,
                     'a_recibir' => $aRecibir,
                     'monto_pendiente_cobro' => $pendienteCobroRuta,
