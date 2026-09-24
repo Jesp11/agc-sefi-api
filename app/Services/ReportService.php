@@ -1007,19 +1007,23 @@ class ReportService
 
         $carteraActivaTotal = (float) Credito::where('estado', 'Activo')->sum('saldo_pendiente');
 
-        $configFondeo = [
-            'MARIA GUADALUPE DIAZ RODRIGUEZ' => ['tasa' => 4.0, 'compromiso' => 2000.0, 'dia' => 'Día 15 de cada mes'],
-            'JUANA SANCHEZ MORALES' => ['tasa' => 12.0, 'compromiso' => 2400.0, 'dia' => 'Días 24 ($800) y 28 ($1,600)'],
-            'ISIDORA HERNANDEZ GARCIA 1' => ['tasa' => 4.0, 'compromiso' => 1600.0, 'dia' => 'Día 24 de cada mes'],
-            'ISIDORA HERNANDEZ GARCIA 2' => ['tasa' => 4.0, 'compromiso' => 2000.0, 'dia' => 'Día 28 de cada mes'],
-            'JOSSUE GIBRAN SOBREVILLA DIAZ 1' => ['tasa' => 5.0, 'compromiso' => 4250.0, 'dia' => 'Día 05 de cada mes'],
-            'JOSSUE GIBRAN SOBREVILLA DIAZ 2' => ['tasa' => 2.0, 'compromiso' => 2000.0, 'dia' => 'Día 25 de cada mes'],
+        $diasPago = [
+            'MARIA GUADALUPE DIAZ RODRIGUEZ' => 'Día 15 de cada mes',
+            'JUANA SANCHEZ MORALES' => 'Días 24 ($800) y 28 ($1,600)',
+            'ISIDORA HERNANDEZ GARCIA 1' => 'Día 24 de cada mes',
+            'ISIDORA HERNANDEZ GARCIA 2' => 'Día 28 de cada mes',
+            'JOSSUE GIBRAN SOBREVILLA DIAZ 1' => 'Día 05 de cada mes',
+            'JOSSUE GIBRAN SOBREVILLA DIAZ 2' => 'Día 25 de cada mes',
         ];
 
-        $inversionistas = Inversionista::with(['aportaciones' => fn ($q) => $q->orderBy('fecha')->orderBy('id')])
+        $inversionistas = Inversionista::with([
+            'aportaciones' => fn ($q) => $q->orderBy('fecha')->orderBy('id'),
+            'liquidaciones',
+        ])
+            ->orderByDesc('activo')
             ->orderBy('nombre')
             ->get()
-            ->map(function (Inversionista $inv) use ($inicio, $fin, $rendimientos, $todosRendimientos, $configFondeo) {
+            ->map(function (Inversionista $inv) use ($inicio, $fin, $rendimientos, $todosRendimientos, $diasPago) {
                 $aportacionesHistoricas = (float) $inv->aportaciones->where('tipo', 'Aportacion')->sum('monto');
                 $retirosHistoricos = (float) $inv->aportaciones->where('tipo', 'Retiro')->sum('monto');
                 $saldoCapital = round($aportacionesHistoricas - $retirosHistoricos, 2);
@@ -1033,12 +1037,16 @@ class ReportService
 
                 $rendimientosInv = $this->matchRendimientosToInversionista($rendimientos, $inv);
                 $todosRendimientosInv = $this->matchRendimientosToInversionista($todosRendimientos, $inv);
+                $rendimientoLiquidacionesPeriodo = (float) $inv->liquidaciones
+                    ->where('estado', 'Confirmada')
+                    ->filter(fn ($item) => $item->fecha && $item->fecha->between($inicio, $fin))
+                    ->sum('rendimiento_final');
+                $rendimientoLiquidacionesHistorico = (float) $inv->liquidaciones
+                    ->where('estado', 'Confirmada')
+                    ->sum('rendimiento_final');
 
-                $cfg = $configFondeo[$inv->nombre] ?? [
-                    'tasa' => $saldoCapital > 0 ? round(($rendimientosInv->sum('monto') / $saldoCapital) * 100, 2) : 0,
-                    'compromiso' => 0.0,
-                    'dia' => 'No especificado',
-                ];
+                $tasaMensual = round((float) $inv->tasa_mensual, 2);
+                $compromisoMensual = $inv->calcularRendimientoMensual($saldoCapital);
 
                 $movimientos = $inv->aportaciones
                     ->filter(fn ($item) => $item->fecha && $item->fecha->between($inicio, $fin))
@@ -1062,11 +1070,11 @@ class ReportService
                     'saldo_capital' => $saldoCapital,
                     'aportaciones_periodo' => round($aportacionesPeriodo, 2),
                     'retiros_periodo' => round($retirosPeriodo, 2),
-                    'rendimientos_periodo' => round((float) $rendimientosInv->sum('monto'), 2),
-                    'rendimientos_historicos' => round((float) $todosRendimientosInv->sum('monto'), 2),
-                    'tasa_mensual' => $cfg['tasa'],
-                    'compromiso_mensual' => $cfg['compromiso'],
-                    'dia_pago' => $cfg['dia'],
+                    'rendimientos_periodo' => round((float) $rendimientosInv->sum('monto') + $rendimientoLiquidacionesPeriodo, 2),
+                    'rendimientos_historicos' => round((float) $todosRendimientosInv->sum('monto') + $rendimientoLiquidacionesHistorico, 2),
+                    'tasa_mensual' => $tasaMensual,
+                    'compromiso_mensual' => $compromisoMensual,
+                    'dia_pago' => $diasPago[mb_strtoupper($inv->nombre, 'UTF-8')] ?? 'No especificado',
                     'movimientos' => $movimientos,
                 ]);
             })

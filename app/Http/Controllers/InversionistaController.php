@@ -5,13 +5,20 @@ namespace App\Http\Controllers;
 use App\Models\Inversionista;
 use App\Services\CapitalService;
 use App\Services\InversionistaImportService;
+use App\Services\FlujoCajaService;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class InversionistaController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        $inversionistas = Inversionista::with(['aportaciones' => fn ($q) => $q->orderBy('fecha')])->get();
+        $inversionistas = Inversionista::with([
+            'aportaciones' => fn ($q) => $q->orderBy('fecha'),
+            'liquidaciones.solicitadoPor:id,name',
+            'liquidaciones.confirmadoPor:id,name',
+            'reactivaciones.realizadoPor:id,name',
+        ])->get();
         $carteraActivaTotal = (float) \App\Models\Credito::where('estado', 'Activo')->sum('saldo_pendiente');
 
         $items = $inversionistas->map(function ($inv) {
@@ -22,9 +29,11 @@ class InversionistaController extends Controller
 
             return array_merge($inv->toArray(), [
                 'saldo_capital' => round($saldoCapital, 2),
+                'rendimiento_mensual' => $inv->calcularRendimientoMensual($saldoCapital),
                 'total_aportaciones' => round($aportado, 2),
                 'total_retiros' => round($retirado, 2),
                 'total_rendimientos' => round($rendimiento, 2),
+                'liquidacion_pendiente' => $inv->liquidaciones->firstWhere('estado', 'Pendiente'),
             ]);
         });
 
@@ -42,6 +51,7 @@ class InversionistaController extends Controller
                 'cartera_activa_total' => round($carteraActivaTotal, 2),
                 'ratio_cobertura' => $ratioCobertura,
             ],
+            'puede_liquidar' => $request->user()?->hasPermission('inversionistas.manage') ?? false,
         ]);
     }
 
@@ -55,6 +65,7 @@ class InversionistaController extends Controller
             'telefono' => 'nullable|string',
             'email' => 'nullable|email',
             'tasa_preferencial' => 'boolean',
+            'tasa_mensual' => 'sometimes|numeric|min:0|max:100',
         ]);
 
         $inv = Inversionista::create($data);
@@ -72,6 +83,7 @@ class InversionistaController extends Controller
             'telefono' => 'nullable|string',
             'email' => 'nullable|email',
             'tasa_preferencial' => 'boolean',
+            'tasa_mensual' => 'sometimes|numeric|min:0|max:100',
             'activo' => 'boolean',
         ]));
         return response()->json(['message' => 'Actualizado', 'data' => $inv]);
@@ -87,11 +99,19 @@ class InversionistaController extends Controller
         ]);
 
         if (($data['tipo'] ?? '') === 'Rendimiento') {
-            $aportacion = $capitalService->registrarPagoRendimiento((int) $id, $data);
+            try {
+                $aportacion = $capitalService->registrarPagoRendimiento((int) $id, $data);
+            } catch (\InvalidArgumentException $e) {
+                return response()->json(['message' => $e->getMessage()], 422);
+            }
             return response()->json(['message' => 'Pago de rendimiento registrado', 'data' => $aportacion], 201);
         }
 
-        $aportacion = $capitalService->registrarAportacion((int) $id, $data);
+        try {
+            $aportacion = $capitalService->registrarAportacion((int) $id, $data);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
         return response()->json(['message' => 'Aportación registrada', 'data' => $aportacion], 201);
     }
 
@@ -105,11 +125,76 @@ class InversionistaController extends Controller
             'notas' => 'nullable|string|max:500',
         ]);
 
-        $aportacion = $capitalService->registrarPagoRendimiento((int) $id, $data);
+        try {
+            $aportacion = $capitalService->registrarPagoRendimiento((int) $id, $data);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
         return response()->json([
             'message' => 'Pago de rendimiento registrado exitosamente',
             'data' => $aportacion,
         ], 201);
+    }
+
+    public function liquidacion(Request $request, $id, CapitalService $capitalService)
+    {
+        $data = $request->validate([
+            'rendimiento_final' => 'required|numeric|min:0|decimal:0,2',
+            'fecha' => 'required|date|before_or_equal:today',
+            'cuenta' => ['required', 'string', Rule::in(FlujoCajaService::CUENTAS)],
+            'notas' => 'nullable|string|max:1000',
+        ]);
+
+        try {
+            $liquidacion = $capitalService->solicitarLiquidacion((int) $id, $data);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json([
+            'message' => 'Liquidación enviada a confirmación de Caja.',
+            'data' => $liquidacion,
+        ], 201);
+    }
+
+    public function ajustarCapital(Request $request, $id, CapitalService $capitalService)
+    {
+        $data = $request->validate([
+            'total_aportaciones' => 'required|numeric|min:0|decimal:0,2',
+            'saldo_capital' => 'required|numeric|min:0|decimal:0,2|lte:total_aportaciones',
+            'fecha' => 'required|date|before_or_equal:today',
+            'motivo' => 'required|string|min:5|max:500',
+        ]);
+
+        try {
+            $inversionista = $capitalService->ajustarCapitalInversionista((int) $id, $data);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json([
+            'message' => 'Capital del inversionista corregido con trazabilidad contable.',
+            'data' => $inversionista,
+        ]);
+    }
+
+    public function reactivar(Request $request, $id, CapitalService $capitalService)
+    {
+        $data = $request->validate([
+            'fecha' => 'required|date|before_or_equal:today',
+            'motivo' => 'required|string|min:5|max:500',
+        ]);
+
+        try {
+            $reactivacion = $capitalService->reactivarInversionista((int) $id, $data);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json([
+            'message' => 'Inversionista reactivado. Puede iniciar un nuevo ciclo de inversión.',
+            'data' => $reactivacion,
+        ]);
     }
 
     public function import(Request $request, InversionistaImportService $service)

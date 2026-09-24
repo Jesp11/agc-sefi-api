@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\ConfirmacionMovimiento;
+use App\Models\LiquidacionInversionista;
+use App\Services\CapitalService;
 use App\Services\FlujoCajaService;
 use App\Support\RoleHelper;
 use Illuminate\Http\Request;
@@ -55,13 +57,20 @@ class ConfirmacionMovimientoController extends Controller
         return response()->json($movimientos);
     }
 
-    public function confirmar(ConfirmacionMovimiento $confirmacion, FlujoCajaService $flujoCaja)
+    public function confirmar(
+        ConfirmacionMovimiento $confirmacion,
+        FlujoCajaService $flujoCaja,
+        CapitalService $capitalService,
+    )
     {
         try {
-            $movimiento = $flujoCaja->confirmarEgresoPendiente($confirmacion);
+            $liquidacion = LiquidacionInversionista::where('confirmacion_movimiento_id', $confirmacion->id)->first();
+            $movimiento = $liquidacion
+                ? $capitalService->confirmarLiquidacion($liquidacion, $flujoCaja)
+                : $flujoCaja->confirmarEgresoPendiente($confirmacion);
             $message = $movimiento->estado === 'EntregadoGestor'
                 ? 'Entrega al gestor confirmada y aplicada a caja. Falta confirmar el desembolso al cliente.'
-                : 'Egreso confirmado y aplicado a caja.';
+                : ($liquidacion ? 'Liquidación confirmada, aplicada a caja y el inversionista quedó inactivo.' : 'Egreso confirmado y aplicado a caja.');
 
             return response()->json(['message' => $message, 'data' => $movimiento]);
         } catch (\InvalidArgumentException $e) {
@@ -177,12 +186,22 @@ class ConfirmacionMovimientoController extends Controller
         }
     }
 
-    public function cancelar(ConfirmacionMovimiento $confirmacion)
+    public function cancelar(ConfirmacionMovimiento $confirmacion, CapitalService $capitalService)
     {
-        if ($confirmacion->estado !== 'Pendiente') {
-            return response()->json(['message' => 'Este movimiento ya fue atendido.'], 422);
+        try {
+            $liquidacion = LiquidacionInversionista::where('confirmacion_movimiento_id', $confirmacion->id)->first();
+            if ($liquidacion) {
+                $capitalService->cancelarLiquidacion($liquidacion);
+                return response()->json(['message' => 'Solicitud de liquidación cancelada sin afectar el capital.']);
+            }
+
+            if ($confirmacion->estado !== 'Pendiente') {
+                return response()->json(['message' => 'Este movimiento ya fue atendido.'], 422);
+            }
+            $confirmacion->update(['estado' => 'Cancelado', 'confirmado_por' => auth()->id(), 'confirmado_at' => now()]);
+            return response()->json(['message' => 'Movimiento pendiente cancelado.']);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
         }
-        $confirmacion->update(['estado' => 'Cancelado', 'confirmado_por' => auth()->id(), 'confirmado_at' => now()]);
-        return response()->json(['message' => 'Movimiento pendiente cancelado.']);
     }
 }

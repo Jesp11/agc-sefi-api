@@ -40,6 +40,13 @@ class InversionistaImportService
                 }
 
                 $inversionista = $this->resolveInversionista($nombre);
+                if ($inversionista?->liquidaciones()->where('estado', 'Pendiente')->exists()) {
+                    $stats['errors'][] = [
+                        'fila' => $index + 2,
+                        'mensaje' => "{$nombre} tiene una liquidación pendiente; no se modificó su capital.",
+                    ];
+                    continue;
+                }
                 $action = $inversionista ? 'updated' : 'created';
                 $inversionista = $this->upsertInversionista($inversionista, $nombre);
                 $stats[$action]++;

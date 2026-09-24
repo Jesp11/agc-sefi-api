@@ -59,4 +59,11 @@ class User extends Authenticatable implements JWTSubject
     {
         return RoleHelper::isFieldLike($this->role?->nombre);
     }
+
+    public function hasPermission(string $permission): bool
+    {
+        $this->loadMissing('role.permissions');
+
+        return (bool) $this->role?->permissions->contains('nombre', $permission);
+    }
 }

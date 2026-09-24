@@ -140,6 +140,12 @@ Route::middleware('auth:api')->group(function () {
     Route::put('inversionistas/{id}', [InversionistaController::class, 'update']);
     Route::post('inversionistas/{id}/aportaciones', [InversionistaController::class, 'aportacion']);
     Route::post('inversionistas/{id}/rendimiento', [InversionistaController::class, 'pagoRendimiento']);
+    Route::post('inversionistas/{id}/liquidacion', [InversionistaController::class, 'liquidacion'])
+        ->middleware('permission:inversionistas.manage');
+    Route::patch('inversionistas/{id}/capital', [InversionistaController::class, 'ajustarCapital'])
+        ->middleware('permission:inversionistas.manage');
+    Route::post('inversionistas/{id}/reactivacion', [InversionistaController::class, 'reactivar'])
+        ->middleware('permission:inversionistas.manage');
     Route::get('capital', [CapitalController::class, 'index']);
     Route::get('gastos', [GastoController::class, 'index']);
     Route::post('gastos', [GastoController::class, 'store']);

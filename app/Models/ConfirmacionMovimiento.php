@@ -36,4 +36,5 @@ class ConfirmacionMovimiento extends Model
     public function credito() { return $this->belongsTo(Credito::class, 'num_prog', 'num_prog'); }
     public function movimientoCaja() { return $this->belongsTo(MovimientoCaja::class, 'movimiento_caja_id'); }
     public function movimientoReintegro() { return $this->belongsTo(MovimientoCaja::class, 'movimiento_reintegro_id'); }
+    public function liquidacionInversionista() { return $this->hasOne(LiquidacionInversionista::class); }
 }
