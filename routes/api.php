@@ -225,6 +225,8 @@ Route::middleware('auth:api')->group(function () {
         ->middleware('role:admin');
     Route::post('reportes/cierre-mensual/manual', [ReporteController::class, 'guardarCierreMensualManual'])
         ->middleware('role:admin');
+    Route::post('reportes/cierre-mensual/confirmar', [ReporteController::class, 'confirmarCierreMensual'])
+        ->middleware('role:admin');
     Route::get('reportes/inversionistas/estado-financiero', [ReporteController::class, 'estadoFinancieroInversionistas']);
     Route::get('reportes/ahorros', [ReporteController::class, 'ahorros']);
     Route::get('reportes/ahorros-personal', [ReporteController::class, 'ahorrosPersonal']);

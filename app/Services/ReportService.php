@@ -8,6 +8,7 @@ use App\Models\AhorroSocio;
 use App\Models\Aportacion;
 use App\Models\Asesor;
 use App\Models\CierreMensualManual;
+use App\Models\CierreMensualSnapshot;
 use App\Models\Cliente;
 use App\Models\ConfiguracionSistema;
 use App\Models\Credito;
@@ -952,6 +953,7 @@ class ReportService
         $adeudos = $this->buildAdeudosResumen();
         $fuentes = $this->buildFuentesFondeoResumen($inicio, $fin);
         $visual = $this->buildCierreMensualVisual($inicio, $corte);
+        $snapshot = CierreMensualSnapshot::query()->where('mes', $inicio->format('Y-m'))->first();
 
         return [
             'mes' => $inicio->format('Y-m'),
@@ -972,12 +974,17 @@ class ReportService
             ],
             'fondeo' => $fuentes,
             'visual' => $visual,
+            'cierre_confirmado' => $snapshot !== null,
         ];
     }
 
     public function guardarCierreMensualManual(string $mes, array $data): CierreMensualManual
     {
         Carbon::createFromFormat('Y-m', $mes);
+
+        if (CierreMensualSnapshot::query()->where('mes', $mes)->exists()) {
+            throw new InvalidArgumentException('El cierre mensual ya fue confirmado y no puede modificarse.');
+        }
 
         return CierreMensualManual::query()->updateOrCreate(
             ['mes' => $mes],
@@ -988,6 +995,29 @@ class ReportService
                 'registrado_por' => Auth::id(),
             ]
         );
+    }
+
+    public function confirmarCierreMensual(string $mes): CierreMensualSnapshot
+    {
+        if (CierreMensualSnapshot::query()->where('mes', $mes)->exists()) {
+            throw new InvalidArgumentException('El cierre mensual ya fue confirmado y no puede modificarse.');
+        }
+
+        $inicio = Carbon::createFromFormat('Y-m', $mes)->startOfMonth();
+        $visual = $this->buildCierreMensualVisual($inicio, $this->resolveCorteMensual($inicio, $inicio->copy()->endOfMonth()));
+
+        return DB::transaction(function () use ($mes, $visual) {
+            $capitalPasivo = (float) ($visual['valores_acciones']['capital_pasivo'] ?? 0);
+            $this->flujoCajaService->registrarSaldoInicialDesdeCierre($mes, $capitalPasivo);
+
+            return CierreMensualSnapshot::query()->create([
+                'mes' => $mes,
+                'cartera_total' => (float) ($visual['valores_acciones']['valor_bruto_cartera'] ?? 0),
+                'mora_activa' => (float) ($visual['cierre_mora']['mora_activa'] ?? 0),
+                'mora_muerta' => (float) ($visual['cierre_mora']['mora_muerta'] ?? 0),
+                'capturado_en' => now(),
+            ]);
+        });
     }
 
     public function estadoFinancieroInversionistas(?string $fechaInicio = null, ?string $fechaFin = null): array

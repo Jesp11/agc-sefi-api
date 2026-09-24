@@ -189,12 +189,29 @@ class ReporteController extends Controller
             'productividad_mensual' => 'nullable|numeric',
         ]);
 
-        $registro = $this->reportService->guardarCierreMensualManual($data['mes'], $data);
+        try {
+            $registro = $this->reportService->guardarCierreMensualManual($data['mes'], $data);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
 
         return response()->json([
             'message' => 'Indicadores operativos guardados',
             'data' => $registro,
         ]);
+    }
+
+    public function confirmarCierreMensual(Request $request)
+    {
+        $data = $request->validate(['mes' => 'required|date_format:Y-m']);
+
+        try {
+            $snapshot = $this->reportService->confirmarCierreMensual($data['mes']);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json(['message' => 'Cierre mensual confirmado e inmutable.', 'data' => $snapshot]);
     }
 
     public function accionistasConfigurados()

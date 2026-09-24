@@ -81,6 +81,20 @@ class FlujoCajaService
         });
     }
 
+    public function registrarSaldoInicialDesdeCierre(string $mesCierre, float $monto): MovimientoCaja
+    {
+        $fechaInicial = Carbon::createFromFormat('Y-m', $mesCierre)->addMonth()->startOfMonth()->toDateString();
+
+        return $this->registrar([
+            'fecha' => $fechaInicial,
+            'motivo' => "Saldo inicial por cierre de {$mesCierre}",
+            'tipo' => 'Ingreso',
+            'monto' => $monto,
+            'categoria' => 'SaldoInicial',
+            'referencia' => "cierre-mensual:{$mesCierre}",
+        ]);
+    }
+
     /** Guarda un egreso automático para revisión; aún no afecta la caja. */
     public function solicitarConfirmacionEgreso(array $data): ConfirmacionMovimiento
     {
@@ -789,6 +803,14 @@ class FlujoCajaService
             ->groupBy('cuenta')
             ->map(fn ($items) => round((float) $items->sum('monto'), 2));
 
+        $distribucionCategoriasEgresos = $movimientosMes
+            // Desembolsos y renovaciones son salidas de crédito, no gastos
+            // operativos; se omiten del pastel de gastos del cierre mensual.
+            ->filter(fn ($m) => $m->tipo === 'Egreso'
+                && ! in_array($m->categoria, ['SaldoInicial', 'Desembolso', 'Renovacion'], true))
+            ->groupBy(fn ($m) => trim((string) ($m->categoria ?: 'Sin categoría')))
+            ->map(fn ($items) => round((float) $items->sum('monto'), 2));
+
         $carteraIndividual = Credito::where('tipo_credito', 'Individual')
             ->where('estado', 'Activo')
             ->sum('saldo_pendiente');
@@ -828,6 +850,9 @@ class FlujoCajaService
             'distribucion_cuentas' => [
                 'ingresos' => $distribucionIngresos,
                 'egresos' => $distribucionEgresos,
+            ],
+            'distribucion_categorias' => [
+                'egresos' => $distribucionCategoriasEgresos,
             ],
             'cartera_individual' => round((float) $carteraIndividual, 2),
             'cartera_grupal' => round((float) $carteraGrupal, 2),
