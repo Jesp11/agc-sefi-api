@@ -190,10 +190,14 @@ class FlujoCajaService
 
             $esRenovacion = mb_strtolower((string) $confirmacion->categoria) === 'renovacion';
             $concepto = $esRenovacion ? 'RENOVACIÓN CANCELADA' : 'DESEMBOLSO CANCELADO';
+            $confirmacion->loadMissing(['credito.cliente', 'credito.grupo']);
+            $beneficiario = $confirmacion->credito?->cliente?->nombre_completo
+                ?? $confirmacion->credito?->grupo?->nombre_grupo
+                ?? 'CLIENTE NO IDENTIFICADO';
             $movimiento = $this->registrar([
                 'fecha' => now()->toDateString(),
                 'id_asesor' => $confirmacion->id_asesor,
-                'motivo' => "REINTEGRO DE {$concepto} #{$confirmacion->num_prog}",
+                'motivo' => "REINTEGRO DE {$concepto} #{$confirmacion->num_prog} — {$beneficiario}",
                 'tipo' => 'Ingreso',
                 'monto' => $confirmacion->monto,
                 'categoria' => $esRenovacion ? 'ReintegroRenovacion' : 'ReintegroDesembolso',
@@ -254,6 +258,29 @@ class FlujoCajaService
             $confirmacion->update(['estado' => 'Reprogramado']);
 
             return $nuevoIntento->fresh(['asesor', 'credito']);
+        });
+    }
+
+    /** Cierra el flujo después del reintegro cuando el desembolso ya no se realizará. */
+    public function cancelarDefinitivamenteDesembolsoReintegrado(ConfirmacionMovimiento $confirmacion): ConfirmacionMovimiento
+    {
+        return DB::transaction(function () use ($confirmacion) {
+            $confirmacion = ConfirmacionMovimiento::lockForUpdate()->findOrFail($confirmacion->id);
+            if ($confirmacion->estado !== 'Reintegrado' || ! $confirmacion->requiereConfirmacionGestor()) {
+                throw new \InvalidArgumentException('Sólo se puede cancelar definitivamente un desembolso ya reintegrado.');
+            }
+            if (ConfirmacionMovimiento::where('num_prog', $confirmacion->num_prog)
+                ->where('id', '!=', $confirmacion->id)
+                ->whereIn('estado', ['Pendiente', 'EntregadoGestor'])
+                ->exists()) {
+                throw new \InvalidArgumentException('Ya existe otro desembolso en proceso para este crédito.');
+            }
+
+            // Se conserva la auditoría original de entrega y reintegro; el
+            // updated_at deja constancia del cierre administrativo.
+            $confirmacion->update(['estado' => 'Cancelado']);
+
+            return $confirmacion->fresh(['asesor', 'credito', 'movimientoCaja', 'movimientoReintegro']);
         });
     }
 

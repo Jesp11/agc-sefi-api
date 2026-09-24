@@ -158,6 +158,7 @@ Route::middleware('auth:api')->group(function () {
     Route::post('confirmaciones-movimientos/{confirmacion}/cancelar-desembolso', [ConfirmacionMovimientoController::class, 'cancelarDesembolsoGestor']);
     Route::post('confirmaciones-movimientos/{confirmacion}/confirmar-reintegro', [ConfirmacionMovimientoController::class, 'confirmarReintegro'])->middleware('role:admin');
     Route::post('confirmaciones-movimientos/{confirmacion}/reprogramar-desembolso', [ConfirmacionMovimientoController::class, 'reprogramarDesembolso'])->middleware('role:admin');
+    Route::post('confirmaciones-movimientos/{confirmacion}/cancelar-definitivamente', [ConfirmacionMovimientoController::class, 'cancelarDefinitivamente'])->middleware('role:admin');
     Route::post('confirmaciones-movimientos/{confirmacion}/cancelar', [ConfirmacionMovimientoController::class, 'cancelar'])->middleware('role:admin');
     Route::post('flujo-caja/import', [FlujoCajaController::class, 'import'])
         ->middleware('role:admin');

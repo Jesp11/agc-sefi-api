@@ -192,8 +192,9 @@ class FlujoCajaDesembolsoTest extends TestCase
     #[\PHPUnit\Framework\Attributes\DataProvider('categoriasDesembolso')]
     public function test_cancelled_disbursement_requires_cash_reintegration_confirmation(string $categoria): void
     {
+        Cliente::create(['id_cliente' => 'CLI-REINTEGRO', 'nombre_completo' => 'Virginia Reintegro']);
         $credito = Credito::create([
-            'id_asesor' => 1, 'fecha_otorgacion' => '2026-09-05', 'monto_otorgado' => 1500,
+            'id_cliente' => 'CLI-REINTEGRO', 'id_asesor' => 1, 'fecha_otorgacion' => '2026-09-05', 'monto_otorgado' => 1500,
             'estado' => 'Activo',
         ]);
         $flujoCaja = app(FlujoCajaService::class);
@@ -217,6 +218,7 @@ class FlujoCajaDesembolsoTest extends TestCase
         $this->assertNotNull($reintegrado->reintegrado_at);
         $this->assertDatabaseHas('movimientos_caja', [
             'referencia' => "REINTEGRO-RENOVACION-{$pendiente->id}",
+            'motivo' => "REINTEGRO DE ".($categoria === 'Renovacion' ? 'RENOVACIÓN CANCELADA' : 'DESEMBOLSO CANCELADO')." #{$credito->num_prog} — Virginia Reintegro",
             'tipo' => 'Ingreso',
             'monto' => 1500.00,
             'categoria' => $categoria === 'Renovacion' ? 'ReintegroRenovacion' : 'ReintegroDesembolso',
@@ -228,6 +230,33 @@ class FlujoCajaDesembolsoTest extends TestCase
         $this->assertSame('2026-09-10', $reprogramado->fecha->toDateString());
         $this->assertSame('Reprogramado', $reintegrado->fresh()->estado);
         $this->assertSame('PendienteDesembolso', $credito->fresh()->estado);
+    }
+
+    public function test_reintegrated_disbursement_can_be_cancelled_definitively_without_being_carried_forward(): void
+    {
+        $credito = Credito::create([
+            'id_asesor' => 1, 'fecha_otorgacion' => '2026-09-05', 'monto_otorgado' => 1500,
+            'estado' => 'PendienteDesembolso',
+        ]);
+        $flujoCaja = app(FlujoCajaService::class);
+        $pendiente = $flujoCaja->solicitarConfirmacionEgreso([
+            'fecha' => '2026-09-05', 'id_asesor' => 1, 'motivo' => 'DESEMBOLSO NO ENTREGADO',
+            'tipo' => 'Egreso', 'monto' => 1500, 'categoria' => 'Desembolso', 'cuenta' => 'Efectivo',
+            'referencia' => 'DESEMBOLSO-CANCELACION-TOTAL', 'num_prog' => $credito->num_prog,
+        ]);
+
+        $entregado = $flujoCaja->confirmarEgresoPendiente($pendiente);
+        $pendienteReintegro = $flujoCaja->cancelarDesembolsoRenovacionPorGestor($entregado);
+        $reintegrado = $flujoCaja->confirmarReintegroRenovacion($pendienteReintegro);
+        $cancelado = $flujoCaja->cancelarDefinitivamenteDesembolsoReintegrado($reintegrado);
+
+        $this->assertSame('Cancelado', $cancelado->estado);
+        $this->assertSame('PendienteDesembolso', $credito->fresh()->estado);
+
+        $listadoDiaPosterior = app(\App\Http\Controllers\ConfirmacionMovimientoController::class)->index(
+            \Illuminate\Http\Request::create('/', 'GET', ['fecha' => '2026-09-06']),
+        );
+        $this->assertSame([], $listadoDiaPosterior->getData(true));
     }
 
     public function test_syncing_a_restructured_delivery_replaces_5028_with_3028(): void

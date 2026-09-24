@@ -46,8 +46,10 @@ class ConfirmacionMovimientoController extends Controller
             ->values();
 
         $movimientos->each(function (ConfirmacionMovimiento $movimiento) use ($foliosConDesembolsoEnProceso) {
-            $movimiento->setAttribute('puede_reprogramar', $movimiento->estado === 'Reintegrado'
-                && ! in_array((int) $movimiento->num_prog, $foliosConDesembolsoEnProceso, true));
+            $puedeResolverReintegro = $movimiento->estado === 'Reintegrado'
+                && ! in_array((int) $movimiento->num_prog, $foliosConDesembolsoEnProceso, true);
+            $movimiento->setAttribute('puede_reprogramar', $puedeResolverReintegro);
+            $movimiento->setAttribute('puede_cancelar_total', $puedeResolverReintegro);
         });
 
         return response()->json($movimientos);
@@ -157,6 +159,19 @@ class ConfirmacionMovimientoController extends Controller
                 'message' => 'Nuevo desembolso programado. Confirma la entrega al gestor cuando se le entregue el efectivo.',
                 'data' => $flujoCaja->reprogramarDesembolsoRenovacion($confirmacion, $fecha),
             ], 201);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+    }
+
+    /** Cierra un desembolso reintegrado cuando ya no se volverá a entregar. */
+    public function cancelarDefinitivamente(ConfirmacionMovimiento $confirmacion, FlujoCajaService $flujoCaja)
+    {
+        try {
+            return response()->json([
+                'message' => 'Desembolso cancelado definitivamente. Ya no quedará pendiente de reprogramación.',
+                'data' => $flujoCaja->cancelarDefinitivamenteDesembolsoReintegrado($confirmacion),
+            ]);
         } catch (\InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
