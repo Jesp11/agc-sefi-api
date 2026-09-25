@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Credito;
 use App\Models\Pago;
+use App\Support\CalendarioQuincenal;
 use Carbon\Carbon;
 
 class MoraCalculationService
@@ -40,13 +41,17 @@ class MoraCalculationService
             return [];
         }
 
-        $schedule = [];
-        $date = Carbon::parse($credito->fecha_primer_pago);
+        $plazos = (int) $credito->plazos;
+        $primerPago = Carbon::parse($credito->fecha_primer_pago);
+        $fechas = $credito->esQuincenal()
+            ? CalendarioQuincenal::fechas($primerPago, $plazos, ...$credito->diasQuincena())
+            : array_map(fn (int $i) => $primerPago->copy()->addWeeks($i), range(0, $plazos - 1));
 
-        for ($i = 0; $i < $credito->plazos; $i++) {
+        $schedule = [];
+        foreach ($fechas as $i => $fecha) {
             $schedule[] = [
                 'semana' => $i + 1,
-                'fecha' => $date->copy()->addWeeks($i)->format('Y-m-d'),
+                'fecha' => $fecha->format('Y-m-d'),
                 'pago' => (float) $credito->valor_ficha,
             ];
         }

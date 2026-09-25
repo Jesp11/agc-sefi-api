@@ -48,6 +48,14 @@ class CreditoController extends Controller
         $data = $request->validated();
         $distribucionIntegrantes = $data['distribucion_integrantes'] ?? null;
         unset($data['distribucion_integrantes']);
+        $data['frecuencia_pago'] = $data['frecuencia_pago'] ?? Credito::FRECUENCIA_SEMANAL;
+        if ($data['frecuencia_pago'] === Credito::FRECUENCIA_QUINCENAL) {
+            // Se muestra en listados y rutas como "15 Y 30".
+            $data['dias_pago'] = "{$data['dia_quincena_1']} Y {$data['dia_quincena_2']}";
+        } else {
+            $data['dia_quincena_1'] = null;
+            $data['dia_quincena_2'] = null;
+        }
         $comisionApertura = 100.00;
 
         $esPersonalizado = !empty($data['es_personalizado']);

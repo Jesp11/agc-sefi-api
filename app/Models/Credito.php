@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\CalendarioQuincenal;
 use App\Support\DiaPago;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -10,6 +11,10 @@ use Illuminate\Database\Eloquent\Model;
 class Credito extends Model
 {
     use HasFactory;
+
+    public const FRECUENCIA_SEMANAL = 'Semanal';
+    public const FRECUENCIA_QUINCENAL = 'Quincenal';
+    public const FRECUENCIAS = [self::FRECUENCIA_SEMANAL, self::FRECUENCIA_QUINCENAL];
 
     protected $table = 'creditos';
 
@@ -33,6 +38,9 @@ class Credito extends Model
         'plazos',
         'valor_ficha',
         'dias_pago',
+        'frecuencia_pago',
+        'dia_quincena_1',
+        'dia_quincena_2',
         'tipo_credito',
         'estado',
         'es_personalizado',
@@ -66,6 +74,20 @@ class Credito extends Model
         return Attribute::make(
             set: fn ($value) => DiaPago::normalizar($value),
         );
+    }
+
+    public function esQuincenal(): bool
+    {
+        return $this->frecuencia_pago === self::FRECUENCIA_QUINCENAL;
+    }
+
+    /** @return array{int, int} Días del mes en que vencen los pagos quincenales. */
+    public function diasQuincena(): array
+    {
+        return [
+            (int) ($this->dia_quincena_1 ?: CalendarioQuincenal::DIA_1_DEFAULT),
+            (int) ($this->dia_quincena_2 ?: CalendarioQuincenal::DIA_2_DEFAULT),
+        ];
     }
 
     public function cliente()

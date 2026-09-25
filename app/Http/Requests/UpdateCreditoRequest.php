@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Models\Credito;
 use App\Support\DiaPago;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
@@ -49,6 +50,9 @@ class UpdateCreditoRequest extends FormRequest
             'plazos' => 'sometimes|integer|min:1',
             'valor_ficha' => 'sometimes|numeric|min:0',
             'dias_pago' => ['sometimes', 'string', Rule::in(DiaPago::HABILES)],
+            'frecuencia_pago' => ['sometimes', 'string', Rule::in(Credito::FRECUENCIAS)],
+            'dia_quincena_1' => ['sometimes', 'nullable', 'integer', 'between:1,31'],
+            'dia_quincena_2' => ['sometimes', 'nullable', 'integer', 'between:1,31'],
             'comision_apertura' => 'sometimes|nullable|numeric|min:0',
             'tasa_asignada' => 'sometimes|nullable|string|max:50',
             'porcentaje_interes' => 'sometimes|nullable|numeric|min:0',

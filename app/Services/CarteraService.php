@@ -64,7 +64,7 @@ class CarteraService
 
         $cobros = [];
         foreach ($query->get() as $credito) {
-            $item = $this->buildCobroItem($credito, $fechaRef, $diaSemana);
+            $item = $this->buildCobroItem($credito, $fechaRef);
             if ($item) {
                 $cobros[] = $item;
             }
@@ -187,7 +187,7 @@ class CarteraService
         ];
     }
 
-    private function buildCobroItem(Credito $credito, Carbon $fechaRef, string $diaSemana): ?array
+    private function buildCobroItem(Credito $credito, Carbon $fechaRef): ?array
     {
         if (!in_array($credito->estado, ['Activo', 'Finalizado'], true)) {
             return null;
@@ -236,8 +236,7 @@ class CarteraService
         $pendientesParaCobro = [$oldest];
 
         $tieneAtrasadas = $oldest['atrasada'];
-        $diaPago = DiaPago::normalizar($credito->dias_pago);
-        $esDiaPago = $diaPago === $diaSemana;
+        $esDiaPago = $this->esDiaDeCobro($credito, $fechaRef, $schedule);
         // Del día: clientes cuyo día asignado es hoy.
         // Atrasados: clientes de otros días que deben cuotas pasadas.
         if (!$tieneAtrasadas && !$esDiaPago) {
@@ -298,6 +297,28 @@ class CarteraService
     }
 
     /**
+     * Los créditos semanales se cobran en su día de la semana asignado. Los
+     * quincenales vencen en días fijos del mes, así que solo es día de cobro
+     * cuando alguna cuota del calendario cae en la fecha.
+     *
+     * @param  array<int, array{fecha: Carbon|string}>  $cuotas
+     */
+    private function esDiaDeCobro(Credito $credito, Carbon $fechaRef, array $cuotas): bool
+    {
+        if (!$credito->esQuincenal()) {
+            return DiaPago::normalizar($credito->dias_pago) === self::DIAS_SEMANA[$fechaRef->dayOfWeek];
+        }
+
+        foreach ($cuotas as $cuota) {
+            if (Carbon::parse($cuota['fecha'])->isSameDay($fechaRef)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Distribuye los abonos de una fecha entre la cuota del día, cuotas
      * vencidas y cuotas futuras. Si el crédito está programado en la fecha,
      * la cuota de ruta tiene prioridad; cualquier excedente cubre atrasos y
@@ -330,7 +351,7 @@ class CarteraService
         }
         unset($cuota);
 
-        $esDiaRuta = DiaPago::normalizar($credito->dias_pago) === self::DIAS_SEMANA[$fechaRef->dayOfWeek];
+        $esDiaRuta = $this->esDiaDeCobro($credito, $fechaRef, $cuotas);
         $indicesCuotasHoy = array_keys($cuotas);
         usort($indicesCuotasHoy, function (int $indiceA, int $indiceB) use ($cuotas, $fechaRef, $esDiaRuta) {
             $fechaA = $cuotas[$indiceA]['fecha'];

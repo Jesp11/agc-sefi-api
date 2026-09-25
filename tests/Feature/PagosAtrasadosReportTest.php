@@ -470,6 +470,27 @@ class PagosAtrasadosReportTest extends TestCase
         $this->assertSame(150.0, (float) $reporte['pagos']->first()->monto);
     }
 
+    public function test_quincenal_credit_is_due_on_its_fixed_month_days_not_on_its_weekday(): void
+    {
+        $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
+        $cliente = $this->cliente('CLI-001', 'Cliente quincenal');
+        // Cuotas los días 15 y 30: 15-ago (sábado), 30-ago (domingo), 15-sep (martes).
+        $credito = $this->credito($advisor, $cliente, 'Activo', '2026-08-15', 3);
+        $credito->update(['frecuencia_pago' => Credito::FRECUENCIA_QUINCENAL, 'dia_quincena_1' => 15, 'dia_quincena_2' => 30]);
+        Pago::create(['num_prog' => $credito->num_prog, 'monto' => 100, 'fecha' => '2026-08-15', 'hora' => '09:00:00', 'tipo' => 'Abono']);
+
+        $sabadoSinCuota = collect(app(CarteraService::class)->cobrosDelDia('2026-08-22', $advisor->id)['cobros'])
+            ->firstWhere('num_prog', $credito->num_prog);
+        $this->assertNull($sabadoSinCuota);
+
+        $cobro = collect(app(CarteraService::class)->cobrosDelDia('2026-08-30', $advisor->id)['cobros'])
+            ->firstWhere('num_prog', $credito->num_prog);
+        $this->assertNotNull($cobro);
+        $this->assertSame('del_dia', $cobro['categoria']);
+        $this->assertSame('2026-08-30', $cobro['pendientes'][0]['fecha']);
+        $this->assertSame(100.0, $cobro['monto_a_cobrar']);
+    }
+
     public function test_daily_collection_exposes_mora_and_counts_its_payment(): void
     {
         $advisor = Asesor::create(['id_asesor' => 'ASE-001', 'nombre_asesor' => 'Ana Gestora']);
@@ -735,7 +756,7 @@ class PagosAtrasadosReportTest extends TestCase
             $table->id('num_prog'); $table->string('id_cliente')->nullable(); $table->unsignedBigInteger('id_grupo')->nullable(); $table->unsignedBigInteger('id_asesor');
             $table->date('fecha_otorgacion'); $table->date('fecha_primer_pago')->nullable(); $table->integer('ciclo'); $table->integer('ciclo_inicio_mora')->nullable(); $table->integer('dias_mora_cache')->default(0); $table->decimal('monto_otorgado', 12, 2);
             $table->decimal('interes', 12, 2); $table->decimal('total', 12, 2); $table->decimal('saldo_pendiente', 12, 2)->nullable(); $table->integer('plazos');
-            $table->decimal('valor_ficha', 12, 2); $table->string('dias_pago'); $table->string('tipo_credito'); $table->string('estado'); $table->timestamps();
+            $table->decimal('valor_ficha', 12, 2); $table->string('dias_pago'); $table->string('frecuencia_pago')->default('Semanal'); $table->unsignedTinyInteger('dia_quincena_1')->nullable(); $table->unsignedTinyInteger('dia_quincena_2')->nullable(); $table->string('tipo_credito'); $table->string('estado'); $table->timestamps();
             $table->unsignedBigInteger('credito_padre_id')->nullable(); $table->text('tabla_amortizacion')->nullable();
         });
         Schema::create('refinanciamientos', function (Blueprint $table) {
