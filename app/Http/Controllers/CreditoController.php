@@ -187,7 +187,14 @@ class CreditoController extends Controller
         ])->findOrFail($id);
         $mora = $this->moraService->calculate($credito);
 
+        $movimientoEnProceso = $credito->movimientoEnProceso();
+
         return response()->json(array_merge($credito->toArray(), [
+            'movimiento_en_proceso' => $movimientoEnProceso ? array_merge(
+                $movimientoEnProceso->only(['id', 'estado', 'categoria', 'monto', 'referencia']),
+                ['descripcion_estado' => $movimientoEnProceso->descripcionEstado()],
+            ) : null,
+            'motivo_bloqueo_eliminacion' => $this->creditoEliminacionService->motivoBloqueo($credito),
             'mora' => $mora,
             'dias_mora' => $mora['dias_mora'],
             'distribucion_documental' => $this->distribucionService->resumen($credito),
@@ -229,6 +236,15 @@ class CreditoController extends Controller
                 'data' => $credito->distribucionesIntegrantes,
                 'distribucion_documental' => $this->distribucionService->resumen($credito),
             ]);
+        }
+
+        if ($movimiento = $credito->movimientoEnProceso()) {
+            return response()->json([
+                'message' => "No se puede editar el crédito #{$credito->num_prog}: su movimiento de "
+                    .mb_strtolower((string) $movimiento->categoria)." está {$movimiento->descripcionEstado()} en Movimientos. "
+                    .'Confírmalo o cancélalo antes de editar el crédito.',
+                'movimiento_en_proceso' => $movimiento->only(['id', 'estado', 'categoria', 'monto', 'referencia']),
+            ], 422);
         }
 
         // Permite reparar de forma explícita renovaciones históricas cuyo

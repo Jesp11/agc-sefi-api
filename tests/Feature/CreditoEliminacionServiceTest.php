@@ -5,14 +5,17 @@ namespace Tests\Feature;
 use App\Models\AhorroPersonal;
 use App\Models\AhorroPersonalMovimiento;
 use App\Models\CicloHistorial;
+use App\Models\ConfirmacionMovimiento;
 use App\Models\Credito;
 use App\Models\IndicadorOperativoEvento;
 use App\Models\MovimientoCaja;
 use App\Models\Pago;
 use App\Services\CreditoEliminacionDesactualizadaException;
+use App\Services\CreditoEliminacionBloqueadaException;
 use App\Services\CreditoEliminacionService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class CreditoEliminacionServiceTest extends TestCase
@@ -22,7 +25,7 @@ class CreditoEliminacionServiceTest extends TestCase
         parent::setUp();
 
         foreach ([
-            'movimientos_caja', 'ahorro_personal_movimientos', 'ahorros_personal',
+            'confirmaciones_movimientos', 'movimientos_caja', 'ahorro_personal_movimientos', 'ahorros_personal',
             'documentos_credito', 'indicadores_operativos_eventos', 'ciclos_historial',
             'pagos', 'refinanciamientos', 'creditos', 'clientes', 'grupos', 'asesores',
         ] as $table) {
@@ -124,6 +127,64 @@ class CreditoEliminacionServiceTest extends TestCase
             $table->unsignedBigInteger('num_prog_nuevo');
             $table->timestamps();
         });
+        Schema::create('confirmaciones_movimientos', function (Blueprint $table) {
+            $table->id(); $table->date('fecha'); $table->unsignedBigInteger('id_asesor')->nullable(); $table->text('motivo');
+            $table->decimal('monto', 14, 2); $table->string('categoria')->nullable(); $table->string('cuenta')->nullable();
+            $table->unsignedBigInteger('num_prog')->nullable(); $table->string('referencia')->nullable()->unique();
+            $table->string('estado')->default('Pendiente'); $table->unsignedBigInteger('movimiento_caja_id')->nullable();
+            $table->unsignedBigInteger('solicitado_por')->nullable(); $table->timestamps();
+        });
+    }
+
+    public static function estadosQueSeEliminanConElCredito(): array
+    {
+        return [['Pendiente'], ['Confirmado'], ['Cancelado'], ['Reprogramado']];
+    }
+
+    #[DataProvider('estadosQueSeEliminanConElCredito')]
+    public function test_it_deletes_the_credit_movement_confirmation_so_it_is_not_orphaned(string $estado): void
+    {
+        $credito = $this->crearCredito();
+        $confirmacion = $this->crearConfirmacion($credito, $estado);
+        $otroCredito = $this->crearCredito();
+        $ajena = $this->crearConfirmacion($otroCredito, 'Pendiente');
+
+        $service = app(CreditoEliminacionService::class);
+        $preview = $service->preview($credito);
+        $this->assertFalse($preview['bloqueado']);
+        $this->assertSame([$confirmacion->id], array_column($preview['impactos']['confirmaciones_movimientos'], 'id'));
+
+        $service->eliminar($credito->num_prog, $preview['huella']);
+
+        $this->assertDatabaseMissing('confirmaciones_movimientos', ['id' => $confirmacion->id]);
+        $this->assertDatabaseHas('confirmaciones_movimientos', ['id' => $ajena->id]);
+    }
+
+    public static function estadosConEfectivoFueraDeCaja(): array
+    {
+        return array_map(fn (string $estado) => [$estado], ConfirmacionMovimiento::ESTADOS_BLOQUEAN_ELIMINACION);
+    }
+
+    #[DataProvider('estadosConEfectivoFueraDeCaja')]
+    public function test_it_blocks_deletion_while_the_disbursement_cash_is_outside_the_register(string $estado): void
+    {
+        $credito = $this->crearCredito();
+        $confirmacion = $this->crearConfirmacion($credito, $estado);
+
+        $service = app(CreditoEliminacionService::class);
+        $preview = $service->preview($credito);
+        $this->assertTrue($preview['bloqueado']);
+        $this->assertStringContainsString('Movimientos', $preview['motivo_bloqueo']);
+
+        try {
+            $service->eliminar($credito->num_prog, $preview['huella']);
+            $this->fail('La eliminación debió bloquearse.');
+        } catch (CreditoEliminacionBloqueadaException) {
+            // Esperado.
+        }
+
+        $this->assertDatabaseHas('creditos', ['num_prog' => $credito->num_prog]);
+        $this->assertDatabaseHas('confirmaciones_movimientos', ['id' => $confirmacion->id]);
     }
 
     public function test_it_reverses_only_explicitly_linked_effects_and_keeps_a_possible_match(): void
@@ -180,6 +241,15 @@ class CreditoEliminacionServiceTest extends TestCase
 
         $this->assertTrue($preview['bloqueado']);
         $this->assertStringContainsString('renovación', $preview['motivo_bloqueo']);
+    }
+
+    private function crearConfirmacion(Credito $credito, string $estado): ConfirmacionMovimiento
+    {
+        return ConfirmacionMovimiento::create([
+            'fecha' => '2026-01-02', 'motivo' => "DESEMBOLSO CRÉDITO #{$credito->num_prog}", 'monto' => 400,
+            'categoria' => 'Desembolso', 'cuenta' => 'Efectivo', 'num_prog' => $credito->num_prog,
+            'referencia' => "DESEMBOLSO-{$credito->num_prog}", 'estado' => $estado,
+        ]);
     }
 
     private function crearCredito(): Credito

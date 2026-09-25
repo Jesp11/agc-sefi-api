@@ -195,11 +195,15 @@ class ConfirmacionMovimientoController extends Controller
                 return response()->json(['message' => 'Solicitud de liquidación cancelada sin afectar el capital.']);
             }
 
-            if ($confirmacion->estado !== 'Pendiente') {
-                return response()->json(['message' => 'Este movimiento ya fue atendido.'], 422);
-            }
-            $confirmacion->update(['estado' => 'Cancelado', 'confirmado_por' => auth()->id(), 'confirmado_at' => now()]);
-            return response()->json(['message' => 'Movimiento pendiente cancelado.']);
+            $confirmacion = app(FlujoCajaService::class)->cancelarEgresoPendiente($confirmacion);
+            $creditoCancelado = $confirmacion->credito?->estado === 'Cancelado';
+
+            return response()->json([
+                'message' => $creditoCancelado
+                    ? "Movimiento pendiente cancelado. El crédito #{$confirmacion->num_prog} quedó cancelado."
+                    : 'Movimiento pendiente cancelado.',
+                'data' => $confirmacion,
+            ]);
         } catch (\InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }

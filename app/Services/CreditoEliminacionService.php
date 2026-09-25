@@ -8,6 +8,7 @@ use App\Models\CicloHistorial;
 use App\Models\Credito;
 use App\Models\DocumentoCredito;
 use App\Models\IndicadorOperativoEvento;
+use App\Models\ConfirmacionMovimiento;
 use App\Models\MovimientoCaja;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -52,8 +53,11 @@ class CreditoEliminacionService
             $query->where('num_prog', $folio)->orWhere('num_prog_relacionado', $folio);
         })->orderBy('id')->get();
 
+        $confirmaciones = ConfirmacionMovimiento::where('num_prog', $folio)->orderBy('id')->get();
+
         $posibles = $this->coincidenciasPosibles($credito);
-        $bloqueado = $this->participaEnRenovacion($credito);
+        $motivoBloqueo = $this->motivoBloqueo($credito, $confirmaciones);
+        $bloqueado = $motivoBloqueo !== null;
 
         $impactos = [
             'pagos' => $pagos->map(fn ($pago) => [
@@ -99,13 +103,23 @@ class CreditoEliminacionService
                 'origen' => $indicador->origen,
                 'actualizado_en' => $indicador->updated_at?->toISOString(),
             ])->values()->all(),
+            // Solicitudes de salida en Movimientos: sin crédito quedarían huérfanas
+            // y, si alguien confirmara una pendiente, registraría un egreso sin respaldo.
+            'confirmaciones_movimientos' => $confirmaciones->map(fn (ConfirmacionMovimiento $confirmacion) => [
+                'id' => $confirmacion->id,
+                'fecha' => $confirmacion->fecha?->toDateString(),
+                'estado' => $confirmacion->estado,
+                'categoria' => $confirmacion->categoria,
+                'monto' => (float) $confirmacion->monto,
+                'motivo' => $confirmacion->motivo,
+                'referencia' => $confirmacion->referencia,
+                'actualizado_en' => $confirmacion->updated_at?->toISOString(),
+            ])->values()->all(),
         ];
 
         $preview = [
             'bloqueado' => $bloqueado,
-            'motivo_bloqueo' => $bloqueado
-                ? 'Este crédito participa en una renovación. Requiere una reversión específica para restaurar el crédito anterior.'
-                : null,
+            'motivo_bloqueo' => $motivoBloqueo,
             'credito' => [
                 'num_prog' => $folio,
                 'tipo_credito' => $credito->tipo_credito,
@@ -175,6 +189,10 @@ class CreditoEliminacionService
             IndicadorOperativoEvento::where('num_prog', $folio)
                 ->orWhere('num_prog_relacionado', $folio)
                 ->delete();
+            $confirmacionIds = collect($impactos['confirmaciones_movimientos'])->pluck('id')->all();
+            if ($confirmacionIds) {
+                ConfirmacionMovimiento::whereIn('id', $confirmacionIds)->delete();
+            }
             // Payments are intentionally removed before the credit even though
             // the FK is cascade: this makes the reversal explicit and portable.
             $credito->pagos()->delete();
@@ -198,6 +216,33 @@ class CreditoEliminacionService
             'preview' => $resultado['preview'],
             'documentos_eliminados' => count($resultado['rutas_documentos']),
         ];
+    }
+
+    /** Motivo por el que no se puede eliminar el crédito, o null si se permite. */
+    public function motivoBloqueo(Credito $credito, ?Collection $confirmaciones = null): ?string
+    {
+        $confirmaciones ??= ConfirmacionMovimiento::where('num_prog', $credito->num_prog)->get();
+
+        if ($this->participaEnRenovacion($credito)) {
+            return 'Este crédito participa en una renovación. Requiere una reversión específica para restaurar el crédito anterior.';
+        }
+
+        $enCurso = $confirmaciones
+            ->whereIn('estado', ConfirmacionMovimiento::ESTADOS_BLOQUEAN_ELIMINACION)
+            ->sortByDesc('id')
+            ->first();
+        if ($enCurso) {
+            $categoria = mb_strtolower((string) ($enCurso->categoria ?: 'desembolso'));
+
+            $detalle = $enCurso->estado === 'Reintegrado'
+                ? 'el efectivo ya regresó a caja, pero falta reprogramar o cancelar definitivamente el desembolso'
+                : 'el efectivo ya salió de caja y falta confirmar su entrega o su reintegro';
+
+            return "El movimiento de {$categoria} de este crédito está {$enCurso->descripcionEstado()} en Movimientos: {$detalle}. "
+                .'Resuélvelo en Movimientos antes de eliminar el crédito.';
+        }
+
+        return null;
     }
 
     private function participaEnRenovacion(Credito $credito): bool

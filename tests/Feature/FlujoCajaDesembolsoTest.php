@@ -19,7 +19,7 @@ class FlujoCajaDesembolsoTest extends TestCase
     {
         parent::setUp();
 
-        foreach (['confirmaciones_movimientos', 'movimientos_caja', 'movimientos_capital', 'gastos_operativos', 'ahorros_personal', 'ahorros_socio', 'creditos', 'clientes', 'asesores'] as $table) {
+        foreach (['pagos', 'confirmaciones_movimientos', 'movimientos_caja', 'movimientos_capital', 'gastos_operativos', 'ahorros_personal', 'ahorros_socio', 'creditos', 'clientes', 'asesores'] as $table) {
             Schema::dropIfExists($table);
         }
 
@@ -62,6 +62,10 @@ class FlujoCajaDesembolsoTest extends TestCase
             $table->string('referencia')->nullable();
             $table->unsignedBigInteger('registrado_por')->nullable();
             $table->timestamps();
+        });
+
+        Schema::create('pagos', function (Blueprint $table) {
+            $table->id(); $table->unsignedBigInteger('num_prog'); $table->decimal('monto', 12, 2); $table->date('fecha'); $table->string('tipo')->default('Abono'); $table->timestamps();
         });
 
         Schema::create('confirmaciones_movimientos', function (Blueprint $table) {
@@ -251,12 +255,58 @@ class FlujoCajaDesembolsoTest extends TestCase
         $cancelado = $flujoCaja->cancelarDefinitivamenteDesembolsoReintegrado($reintegrado);
 
         $this->assertSame('Cancelado', $cancelado->estado);
-        $this->assertSame('PendienteDesembolso', $credito->fresh()->estado);
+        // El préstamo nunca se entregó: ya no queda pendiente de desembolso.
+        $this->assertSame('Cancelado', $credito->fresh()->estado);
 
         $listadoDiaPosterior = app(\App\Http\Controllers\ConfirmacionMovimientoController::class)->index(
             \Illuminate\Http\Request::create('/', 'GET', ['fecha' => '2026-09-06']),
         );
         $this->assertSame([], $listadoDiaPosterior->getData(true));
+    }
+
+    public function test_cancelling_a_pending_disbursement_cancels_the_undelivered_credit(): void
+    {
+        $credito = Credito::create([
+            'id_asesor' => 1, 'fecha_otorgacion' => '2026-09-30', 'monto_otorgado' => 100000,
+            'comision_apertura' => 100, 'estado' => 'PendienteDesembolso',
+        ]);
+        $flujoCaja = app(FlujoCajaService::class);
+        $flujoCaja->registrarDesdeDesembolso($credito, 99900);
+        $pendiente = ConfirmacionMovimiento::where('num_prog', $credito->num_prog)->firstOrFail();
+
+        $cancelado = $flujoCaja->cancelarEgresoPendiente($pendiente);
+
+        $this->assertSame('Cancelado', $cancelado->estado);
+        $this->assertSame('Cancelado', $credito->fresh()->estado);
+        $this->assertSame(0, MovimientoCaja::where('num_prog', $credito->num_prog)->count());
+    }
+
+    public function test_cancelling_a_pending_renewal_keeps_the_credit_pending_disbursement(): void
+    {
+        $credito = Credito::create([
+            'id_asesor' => 1, 'fecha_otorgacion' => '2026-09-30', 'monto_otorgado' => 5000, 'estado' => 'PendienteDesembolso',
+        ]);
+        $flujoCaja = app(FlujoCajaService::class);
+        $flujoCaja->registrarDesdeDesembolso($credito, 4900, null, 'Renovacion');
+        $pendiente = ConfirmacionMovimiento::where('num_prog', $credito->num_prog)->firstOrFail();
+
+        $flujoCaja->cancelarEgresoPendiente($pendiente);
+
+        $this->assertSame('PendienteDesembolso', $credito->fresh()->estado);
+    }
+
+    public function test_cancelling_a_pending_disbursement_does_not_cancel_a_credit_with_payments(): void
+    {
+        $credito = Credito::create([
+            'id_asesor' => 1, 'fecha_otorgacion' => '2026-09-30', 'monto_otorgado' => 5000, 'estado' => 'PendienteDesembolso',
+        ]);
+        \App\Models\Pago::create(['num_prog' => $credito->num_prog, 'monto' => 100, 'fecha' => '2026-10-07', 'tipo' => 'Abono']);
+        $flujoCaja = app(FlujoCajaService::class);
+        $flujoCaja->registrarDesdeDesembolso($credito, 4900);
+
+        $flujoCaja->cancelarEgresoPendiente(ConfirmacionMovimiento::where('num_prog', $credito->num_prog)->firstOrFail());
+
+        $this->assertSame('PendienteDesembolso', $credito->fresh()->estado);
     }
 
     public function test_syncing_a_restructured_delivery_replaces_5028_with_3028(): void

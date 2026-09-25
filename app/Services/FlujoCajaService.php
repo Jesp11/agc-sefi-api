@@ -149,6 +149,48 @@ class FlujoCajaService
         });
     }
 
+    /** Cancela una solicitud de egreso que aún no sale de caja. */
+    public function cancelarEgresoPendiente(ConfirmacionMovimiento $confirmacion): ConfirmacionMovimiento
+    {
+        return DB::transaction(function () use ($confirmacion) {
+            $confirmacion = ConfirmacionMovimiento::lockForUpdate()->findOrFail($confirmacion->id);
+            if ($confirmacion->estado !== 'Pendiente') {
+                throw new \InvalidArgumentException('Este movimiento ya fue atendido.');
+            }
+            $confirmacion->update(['estado' => 'Cancelado', 'confirmado_por' => auth()->id(), 'confirmado_at' => now()]);
+            $this->cancelarCreditoSinDesembolso($confirmacion);
+
+            return $confirmacion->fresh(['asesor', 'credito']);
+        });
+    }
+
+    /**
+     * Si se cancela el único desembolso de un crédito nuevo, el préstamo nunca
+     * se entregó: pasa de PendienteDesembolso a Cancelado para no quedar
+     * esperando un desembolso que ya no ocurrirá.
+     *
+     * Las renovaciones se excluyen: el crédito nuevo absorbió el saldo del
+     * anterior y cancelarlo requiere restaurar ese crédito.
+     */
+    private function cancelarCreditoSinDesembolso(ConfirmacionMovimiento $confirmacion): void
+    {
+        if (! $confirmacion->num_prog || mb_strtolower((string) $confirmacion->categoria) !== 'desembolso') {
+            return;
+        }
+
+        $otroEnProceso = ConfirmacionMovimiento::where('num_prog', $confirmacion->num_prog)
+            ->where('id', '!=', $confirmacion->id)
+            ->whereIn('estado', ConfirmacionMovimiento::ESTADOS_EN_PROCESO)
+            ->exists();
+        if ($otroEnProceso || Pago::where('num_prog', $confirmacion->num_prog)->exists()) {
+            return;
+        }
+
+        Credito::where('num_prog', $confirmacion->num_prog)
+            ->where('estado', 'PendienteDesembolso')
+            ->update(['estado' => 'Cancelado']);
+    }
+
     public function confirmarDesembolsoRenovacionPorGestor(ConfirmacionMovimiento $confirmacion): ConfirmacionMovimiento
     {
         return DB::transaction(function () use ($confirmacion) {
@@ -293,6 +335,7 @@ class FlujoCajaService
             // Se conserva la auditoría original de entrega y reintegro; el
             // updated_at deja constancia del cierre administrativo.
             $confirmacion->update(['estado' => 'Cancelado']);
+            $this->cancelarCreditoSinDesembolso($confirmacion);
 
             return $confirmacion->fresh(['asesor', 'credito', 'movimientoCaja', 'movimientoReintegro']);
         });

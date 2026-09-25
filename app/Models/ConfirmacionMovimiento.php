@@ -8,6 +8,31 @@ class ConfirmacionMovimiento extends Model
 {
     public const CATEGORIAS_DESEMBOLSO = ['Renovacion', 'Desembolso'];
 
+    /**
+     * Estados en los que el movimiento todavía no se confirma ni se cancela:
+     * falta la autorización, la entrega del gestor o cerrar su reintegro.
+     */
+    public const ESTADOS_EN_PROCESO = ['Pendiente', 'EntregadoGestor', 'PendienteReintegro', 'Reintegrado'];
+
+    /**
+     * Estados en los que el efectivo ya salió de caja y el flujo no ha cerrado
+     * (entrega del gestor, reintegro o reprogramación pendientes). Eliminar el
+     * crédito en estos estados dejaría dinero sin respaldo en cartera.
+     */
+    public const ESTADOS_BLOQUEAN_ELIMINACION = ['EntregadoGestor', 'PendienteReintegro', 'Reintegrado'];
+
+    private const DESCRIPCION_ESTADOS = [
+        'Pendiente' => 'pendiente de confirmar',
+        'EntregadoGestor' => 'pendiente de confirmar entrega por el gestor',
+        'PendienteReintegro' => 'pendiente de confirmar el reintegro',
+        'Reintegrado' => 'reintegrado, pendiente de reprogramar o cancelar',
+    ];
+
+    public function descripcionEstado(): string
+    {
+        return self::DESCRIPCION_ESTADOS[$this->estado] ?? mb_strtolower((string) $this->estado);
+    }
+
     public function requiereConfirmacionGestor(): bool
     {
         return in_array(mb_strtolower((string) $this->categoria), ['renovacion', 'desembolso'], true);

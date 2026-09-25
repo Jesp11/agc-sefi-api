@@ -136,6 +136,23 @@ class Credito extends Model
         return $this->hasMany(DocumentoCredito::class, 'num_prog', 'num_prog');
     }
 
+    public function confirmacionesMovimientos()
+    {
+        return $this->hasMany(ConfirmacionMovimiento::class, 'num_prog', 'num_prog');
+    }
+
+    /**
+     * Movimiento de caja del crédito que aún no se confirma ni se cancela.
+     * Mientras exista, editar el crédito dejaría caja y cartera desincronizadas.
+     */
+    public function movimientoEnProceso(): ?ConfirmacionMovimiento
+    {
+        return $this->confirmacionesMovimientos()
+            ->whereIn('estado', ConfirmacionMovimiento::ESTADOS_EN_PROCESO)
+            ->latest('id')
+            ->first();
+    }
+
     public function distribucionesIntegrantes()
     {
         return $this->hasMany(CreditoGrupalDistribucion::class, 'num_prog', 'num_prog')->orderBy('orden');
