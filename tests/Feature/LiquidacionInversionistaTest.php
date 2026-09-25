@@ -166,6 +166,30 @@ class LiquidacionInversionistaTest extends TestCase
         $this->assertSame(403, $middleware->handle($request, fn () => response()->json(['ok' => true]), 'inversionistas.manage')->status());
     }
 
+    public function test_gerencia_y_contabilidad_pueden_liquidar_y_reactivar_inversionistas(): void
+    {
+        $permission = Permission::create(['nombre' => 'inversionistas.manage']);
+        $roles = collect(['Gerencia', 'Contabilidad', 'Gestor de Cobranza'])
+            ->mapWithKeys(fn ($nombre) => [$nombre => Role::create(['nombre' => $nombre])]);
+
+        $migration = require database_path('migrations/2026_09_25_000001_grant_inversionistas_manage_to_finance_roles.php');
+        $migration->up();
+
+        foreach (['Gerencia', 'Contabilidad'] as $nombre) {
+            $user = User::create(['name' => $nombre, 'role_id' => $roles[$nombre]->id]);
+            $this->assertTrue($user->hasPermission($permission->nombre));
+
+            foreach (['liquidacion', 'reactivacion'] as $action) {
+                $request = Request::create("/api/inversionistas/1/{$action}", 'POST');
+                $request->setUserResolver(fn () => $user);
+                $this->assertSame(200, (new EnsurePermission)->handle($request, fn () => response()->json(['ok' => true]), $permission->nombre)->status());
+            }
+        }
+
+        $gestor = User::create(['name' => 'Gestor', 'role_id' => $roles['Gestor de Cobranza']->id]);
+        $this->assertFalse($gestor->hasPermission($permission->nombre));
+    }
+
     public function test_corrige_capital_aportado_y_vigente_sin_generar_movimientos_de_caja(): void
     {
         $inversionista = $this->inversionistaConCapital(50_000);

@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Models\Role;
+use App\Models\Permission;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 
@@ -16,8 +17,11 @@ class AdminUserSeeder extends Seeder
         $adminRole = Role::firstOrCreate(['nombre' => 'admin']);
         Role::firstOrCreate(['nombre' => 'asesor']);
         Role::firstOrCreate(['nombre' => 'Administrador']);
-        Role::firstOrCreate(['nombre' => 'Gerencia']);
-        Role::firstOrCreate(['nombre' => 'Contabilidad']);
+        $investorPermission = Permission::firstOrCreate(['nombre' => 'inversionistas.manage']);
+        foreach (['Gerencia', 'Contabilidad'] as $roleName) {
+            Role::firstOrCreate(['nombre' => $roleName])
+                ->permissions()->syncWithoutDetaching([$investorPermission->id]);
+        }
         Role::firstOrCreate(['nombre' => 'Asesor Financiero']);
         Role::firstOrCreate(['nombre' => 'Gestor de Cobranza']);
 
