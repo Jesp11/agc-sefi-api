@@ -327,6 +327,21 @@ class ReporteController extends Controller
         ));
     }
 
+    public function globalCobros(Request $request)
+    {
+        $data = $request->validate([
+            'periodo' => 'required|string|in:semana,mes',
+            'fecha' => 'sometimes|required|date_format:Y-m-d',
+            'id_asesor' => 'nullable|integer|exists:asesores,id',
+        ]);
+
+        return response()->json($this->reportService->globalCobros(
+            $data['periodo'],
+            $data['fecha'] ?? now()->toDateString(),
+            $this->scopedAsesorId($request),
+        ));
+    }
+
     public function semanal(Request $request)
     {
         return response()->json($this->reportService->reporteSemanal(

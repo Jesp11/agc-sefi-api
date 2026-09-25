@@ -1285,6 +1285,102 @@ class ReportService
         ];
     }
 
+    public function globalCobros(string $periodo, string $fecha, ?int $idAsesor = null): array
+    {
+        $base = Carbon::parse($fecha);
+        $inicioMes = $base->copy()->startOfMonth();
+        $finMes = $base->copy()->endOfMonth();
+        $inicio = $inicioMes->copy();
+        $fin = $finMes->copy();
+        if ($periodo === 'semana') {
+            $lunes = $base->copy()->startOfWeek(Carbon::MONDAY);
+            $viernes = $lunes->copy()->addDays(4);
+            // If the month starts on a weekend, use its first working week.
+            if ($viernes->lt($inicioMes)) {
+                $lunes->addWeek();
+                $viernes = $lunes->copy()->addDays(4);
+            }
+            $inicio = $lunes->lt($inicioMes) ? $inicioMes : $lunes;
+            $fin = $viernes->gt($finMes) ? $finMes : $viernes;
+        }
+
+        // Join only the payment's credit and advisor, never its group allocations.
+        $rows = DB::table('pagos as p')
+            ->leftJoin('creditos as c', 'c.num_prog', '=', 'p.num_prog')
+            ->leftJoin('asesores as a', 'a.id', '=', 'c.id_asesor')
+            ->whereBetween('p.fecha', [$inicio->toDateString(), $fin->toDateString()])
+            ->whereIn('p.tipo', ['Abono', 'Multa'])
+            ->when($idAsesor !== null, fn ($q) => $q->where('c.id_asesor', $idAsesor))
+            ->select('p.fecha', 'a.id as id_asesor', 'a.nombre_asesor')
+            ->selectRaw("SUM(CASE WHEN p.tipo = 'Abono' THEN p.monto ELSE 0 END) as abonos")
+            ->selectRaw("SUM(CASE WHEN p.tipo = 'Multa' THEN p.monto ELSE 0 END) as multas")
+            ->groupBy('p.fecha', 'a.id', 'a.nombre_asesor')
+            ->orderBy('p.fecha')->orderBy('a.nombre_asesor')->orderBy('a.id')
+            ->get()->groupBy('fecha');
+
+        // Accumulate in cents; monthly buckets contain only weekdays within this month.
+        $totales = fn (int $abonos, int $multas) => [
+            'abonos' => $abonos / 100,
+            'multas' => $multas / 100,
+            // Fines belong to the collector and are reported separately.
+            'total_cobrado' => $abonos / 100,
+        ];
+        $bloques = [];
+        $abonosPeriodo = $multasPeriodo = 0;
+        for ($dia = $inicio->copy(); $dia->lte($fin); $dia->addDay()) {
+            if ($dia->isWeekend()) {
+                continue;
+            }
+            $fechaDia = $dia->toDateString();
+            $clave = $periodo === 'mes' ? $dia->copy()->startOfWeek(Carbon::MONDAY)->toDateString() : $fechaDia;
+            if (!isset($bloques[$clave])) {
+                $bloques[$clave] = ['inicio' => $fechaDia, 'fin' => $fechaDia, 'abonos' => 0, 'multas' => 0, 'asesores' => []];
+            }
+            $bloques[$clave]['fin'] = $fechaDia;
+            foreach ($rows->get($fechaDia, collect()) as $row) {
+                $abonos = (int) round((float) $row->abonos * 100);
+                $multas = (int) round((float) $row->multas * 100);
+                $asesorId = $row->id_asesor ?? 'sin-asesor';
+                if (!isset($bloques[$clave]['asesores'][$asesorId])) {
+                    $bloques[$clave]['asesores'][$asesorId] = [
+                        'id_asesor' => $row->id_asesor === null ? null : (int) $row->id_asesor,
+                        'nombre_asesor' => $row->nombre_asesor ?? 'Sin asesor',
+                        'abonos' => 0, 'multas' => 0,
+                    ];
+                }
+                $bloques[$clave]['asesores'][$asesorId]['abonos'] += $abonos;
+                $bloques[$clave]['asesores'][$asesorId]['multas'] += $multas;
+                $bloques[$clave]['abonos'] += $abonos;
+                $bloques[$clave]['multas'] += $multas;
+                $abonosPeriodo += $abonos;
+                $multasPeriodo += $multas;
+            }
+        }
+        $detalle = [];
+        foreach ($bloques as $bloque) {
+            $asesores = collect($bloque['asesores'])->sortBy('nombre_asesor')->map(fn ($asesor) => array_merge(
+                $asesor, $totales($asesor['abonos'], $asesor['multas'])
+            ))->values()->all();
+            $detalle[] = array_merge(
+                $periodo === 'mes'
+                    ? ['numero' => count($detalle) + 1, 'inicio' => $bloque['inicio'], 'fin' => $bloque['fin']]
+                    : ['fecha' => $bloque['inicio']],
+                ['totales' => $totales($bloque['abonos'], $bloque['multas']), 'por_asesor' => $asesores],
+            );
+        }
+
+        return [
+            'periodo' => $periodo,
+            'fecha_base' => $fecha,
+            'inicio' => $inicio->toDateString(),
+            'fin' => $fin->toDateString(),
+            'id_asesor' => $idAsesor,
+            'totales' => $totales($abonosPeriodo, $multasPeriodo),
+            'dias' => $periodo === 'semana' ? $detalle : [],
+            'semanas' => $periodo === 'mes' ? $detalle : [],
+        ];
+    }
+
     public function reporteSemanal(?string $semanaInicio = null, ?int $idAsesor = null): array
     {
         $inicio = $semanaInicio

@@ -217,6 +217,7 @@ Route::middleware('auth:api')->group(function () {
         ->middleware('role:admin');
     Route::post('reportes/renovaciones-historicas/confirm', [RenovacionHistoricaImportController::class, 'confirm'])
         ->middleware('role:admin');
+    Route::get('reportes/global-cobros', [ReporteController::class, 'globalCobros']);
     Route::get('reportes/semanal', [ReporteController::class, 'semanal']);
     Route::get('reportes/inversionistas', [ReporteController::class, 'inversionistas']);
     Route::get('reportes/cierre-mensual', [ReporteController::class, 'cierreMensual']);
