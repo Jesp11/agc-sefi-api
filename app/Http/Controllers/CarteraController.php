@@ -27,6 +27,9 @@ class CarteraController extends Controller
     {
         $tipo = $request->query('tipo');
         $idAsesor = $this->scopedAsesorId($request);
+        if (RoleHelper::isFieldLike($request->user()?->role?->nombre)) {
+            abort_unless(in_array($tipo, ['individual', 'grupal'], true), 403, 'No tienes acceso a la cartera general.');
+        }
 
         // Solo cartera activa: EnMora se lista en /cartera/mora
         $query = Credito::with(['cliente', 'grupo', 'asesor'])

@@ -14,6 +14,8 @@ class BusquedaGlobalController extends Controller
 {
     public function buscar(Request $request)
     {
+        abort_if(RoleHelper::isFieldLike($request->user()?->role?->nombre), 403, 'No tienes acceso a la búsqueda general.');
+
         $q = trim((string) $request->query('q', ''));
         if (mb_strlen($q) < 2) {
             return response()->json([

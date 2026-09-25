@@ -715,6 +715,10 @@ class PagosAtrasadosReportTest extends TestCase
             $this->actingAs($user, 'api');
             foreach ($endpoints as $endpoint) {
                 $url = '/api'.$endpoint.(str_contains($endpoint, '?') ? '&' : '?').'id_asesor='.$asesores[1]->id;
+                if ($endpoint === '/cartera/activa') {
+                    $this->getJson($url)->assertForbidden();
+                    continue;
+                }
                 $response = $this->getJson($url)->assertOk();
                 $rows = $response->json('data') ?? $response->json('creditos');
                 $this->assertNotEmpty($rows, $url);
