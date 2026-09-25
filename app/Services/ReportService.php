@@ -39,6 +39,8 @@ class ReportService
         private MoraCalculationService $moraService,
         private FlujoCajaService $flujoCajaService,
         private IndicadoresOperativosService $indicadoresOperativosService,
+        private BalanceGeneralCarteraService $balanceGeneralCarteraService,
+        private BalanceMoraMensualService $balanceMoraMensualService,
     ) {}
 
     public function reporteDiario(?string $fecha = null, ?int $idAsesor = null): array
@@ -954,6 +956,7 @@ class ReportService
         $fuentes = $this->buildFuentesFondeoResumen($inicio, $fin);
         $visual = $this->buildCierreMensualVisual($inicio, $corte);
         $snapshot = CierreMensualSnapshot::query()->where('mes', $inicio->format('Y-m'))->first();
+        $esMesEnCurso = $inicio->isSameMonth(now());
 
         return [
             'mes' => $inicio->format('Y-m'),
@@ -974,6 +977,18 @@ class ReportService
             ],
             'fondeo' => $fuentes,
             'visual' => $visual,
+            'balance_general_cartera' => $this->balanceGeneralCarteraService->serieAnual(
+                $inicio->year,
+                $esMesEnCurso ? $inicio->format('Y-m') : null,
+                $esMesEnCurso ? (float) $visual['valores_acciones']['valor_bruto_cartera'] : null,
+                $esMesEnCurso ? (float) $visual['valores_acciones']['valor_neto_cartera'] : null,
+            ),
+            'balance_mora_anual' => $this->balanceMoraMensualService->serieAnual(
+                $inicio->year,
+                $esMesEnCurso ? $inicio->format('Y-m') : null,
+                $esMesEnCurso ? (float) $visual['cierre_mora']['mora_activa'] : null,
+                $esMesEnCurso ? (float) $visual['cierre_mora']['mora_muerta'] : null,
+            ),
             'cierre_confirmado' => $snapshot !== null,
         ];
     }
@@ -1010,13 +1025,26 @@ class ReportService
             $capitalPasivo = (float) ($visual['valores_acciones']['capital_pasivo'] ?? 0);
             $this->flujoCajaService->registrarSaldoInicialDesdeCierre($mes, $capitalPasivo);
 
-            return CierreMensualSnapshot::query()->create([
+            $snapshot = CierreMensualSnapshot::query()->create([
                 'mes' => $mes,
                 'cartera_total' => (float) ($visual['valores_acciones']['valor_bruto_cartera'] ?? 0),
                 'mora_activa' => (float) ($visual['cierre_mora']['mora_activa'] ?? 0),
                 'mora_muerta' => (float) ($visual['cierre_mora']['mora_muerta'] ?? 0),
                 'capturado_en' => now(),
             ]);
+
+            $this->balanceGeneralCarteraService->registrarCierre(
+                $mes,
+                (float) ($visual['valores_acciones']['valor_bruto_cartera'] ?? 0),
+                (float) ($visual['valores_acciones']['valor_neto_cartera'] ?? 0),
+            );
+            $this->balanceMoraMensualService->registrarCierre(
+                $mes,
+                (float) ($visual['cierre_mora']['mora_activa'] ?? 0),
+                (float) ($visual['cierre_mora']['mora_muerta'] ?? 0),
+            );
+
+            return $snapshot;
         });
     }
 
